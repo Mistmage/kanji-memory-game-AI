@@ -8,7 +8,7 @@
     "tailwindcss-cli": "^0.1.2",
     "vite": "^7.1.9"
   },
-  "homepage": "https://Mistmage.github.io/kanji-memory-game-AI",
+  "homepage": "https://mistmage.github.io/kanji-memory-game-AI",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
