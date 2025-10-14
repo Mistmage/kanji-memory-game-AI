@@ -1,81 +1,163 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Brain, Users, Shuffle, RotateCcw, Eye, Loader, CloudOff } from 'lucide-react';
+import { Brain, Users, Shuffle, RotateCcw, Eye, Loader, CloudOff, Settings, X, ChevronDown, ChevronUp, BookOpen, Volume2, List, Grid, Info, Check, CornerDownRight } from 'lucide-react';
 
 // --- API Configuration ---
 const API_BASE_URL = 'https://kanjiapi.dev/v1';
 
+// --- Kanji Set Configuration ---
+const KANJI_SETS = {
+  'Jōyō (Standard)': 'joyo',
+  'Jinmeiyō (Names)': 'jinmeiyo',
+  'Heisig (Keywords)': 'heisig',
+  'Kyōiku (School)': 'kyouiku',
+  'Grade 1': 'grade-1',
+  'Grade 2': 'grade-2',
+  'Grade 3': 'grade-3',
+  'Grade 4': 'grade-4',
+  'Grade 5': 'grade-5',
+  'Grade 6': 'grade-6',
+  'Jōyō (excluding Kyōiku)': 'grade-8',
+  'JLPT N5': 'jlpt-5',
+  'JLPT N4': 'jlpt-4',
+  'JLPT N3': 'jlpt-3',
+  'JLPT N2': 'jlpt-2',
+  'JLPT N1': 'jlpt-1',
+  'All Kanji (13k+)': 'all',
+};
+
 // Opponent Types for selection
 const OpponentTypes = {
   PLAYER2: 'Player 2',
-  RANDOMIZER: 'Randomizer (0% memory)',
-  BOT0: 'Bot (Level 0: Low chance)',
-  BOT1: 'Bot (Level 1: Basic memory)',
-  BOT2: 'Bot (Level 2: Balanced strategy)',
-  BOT3: 'Bot (Level 3: High memory)',
-  BOT4: 'Bot (Level 4: Near perfect)',
+  RANDOMIZER: 'Randomizer',
+  BOT_NOVICE: 'Bot (Level 1: Novice)',
+  BOT_CASUAL: 'Bot (Level 2: Casual)',
+  BOT_SHREWD: 'Bot (Level 3: Shrewd)',
+  BOT_MASTER: 'Bot (Level 4: Master)',
+  BOT_ELITE: 'Bot (Level 5: Elite)',
+  CUSTOM: 'Custom Bot',
 };
 
+// --- Bot Configuration Defaults (Array of 13 numbers) ---
+const BOT_CONFIGS = {
+  [OpponentTypes.RANDOMIZER]: [0, 0, 0, 100, 0, 0, 100, 0, 0, 100, 0, 0, 0],
+  [OpponentTypes.BOT_NOVICE]: [0, 5, 90, 5, 0, 0, 100, 20, 0, 80, 0, 0, 0],
+  [OpponentTypes.BOT_CASUAL]: [0, 20, 70, 10, 25, 75, 0, 30, 0, 70, 0, 0, 1],
+  [OpponentTypes.BOT_SHREWD]: [50, 20, 80, 0, 25, 75, 0, 40, 0, 0, 30, 30, 3],
+  [OpponentTypes.BOT_MASTER]: [75, 30, 60, 10, 25, 75, 0, 70, 0, 0, 5, 25, 5],
+  [OpponentTypes.BOT_ELITE]: [100, 5, 95, 0, 25, 75, 0, 80, 0, 20, 0, 0, 8],
+  [OpponentTypes.CUSTOM]: [50, 33, 34, 33, 33, 34, 33, 50, 10, 10, 10, 20, 0]
+};
+
+// --- Helper to select an option based on weighted probabilities ---
+const selectWeightedOption = (options) => {
+    const totalWeight = options.reduce((sum, option) => sum + option.weight, 0);
+    if (totalWeight <= 0) {
+        return options[0]?.action || null;
+    }
+
+    let random = Math.random() * totalWeight;
+    for (const option of options) {
+        if (random < option.weight) {
+            return option.action;
+        }
+        random -= option.weight;
+    }
+    return options[options.length - 1]?.action || null; 
+};
+
+
+// --- Main Component ---
 export default function KanjiMemoryGame() {
   // --- API State ---
-  // Stores the full list of kanji characters (strings) fetched from the API
+  const [kanjiSetEndpoint, setKanjiSetEndpoint] = useState('joyo'); 
   const [kanjiCharacters, setKanjiCharacters] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
   // --- Game State ---
-  const [gridSize, setGridSize] = useState(6); // Default to 6x6
-  // Cards now store the full fetched details
+  const [gridSize, setGridSize] = useState(6); 
   const [cards, setCards] = useState([]);
   const [flippedIndices, setFlippedIndices] = useState([]);
   const [matchedPairs, setMatchedPairs] = useState(new Set());
+  const [matchOwners, setMatchOwners] = useState({}); 
   const [currentPlayer, setCurrentPlayer] = useState(1);
   const [scores, setScores] = useState({ player1: 0, player2: 0 });
-  const [opponentType, setOpponentType] = useState(OpponentTypes.BOT1);
+  const [opponentType, setOpponentType] = useState(OpponentTypes.BOT_CASUAL); 
   const [gameStarted, setGameStarted] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [previousKanjiData, setPreviousKanjiData] = useState(null); // Stores full data objects
+  const [previousKanjiData, setPreviousKanjiData] = useState(null); 
   const [reuseKanji, setReuseKanji] = useState(false);
-  const [showDebugMemory, setShowDebugMemory] = useState(false); // Debug feature
-
-  // --- Bot Memory State ---
-  // Stores the index of the card and its kanjiId: { index: kanjiId, ... }
+  
+  // --- Bot/Customization State ---
   const [botMemory, setBotMemory] = useState({});
+  const [customBotConfig, setCustomBotConfig] = useState(BOT_CONFIGS[OpponentTypes.CUSTOM]);
+  const [debuffFactor, setDebuffFactor] = useState(0); 
+  
+  // --- Modal State (Settings & Kanji Details) ---
+  const [showVisualSettingsModal, setShowVisualSettingsModal] = useState(false);
+  const [showContentSettingsModal, setShowContentSettingsModal] = useState(false); // NEW Modal State
+  const [showKanjiModal, setShowKanjiModal] = useState(false);
+  const [modalKanjiData, setModalKanjiData] = useState(null);
 
-  // Memoized check for game over
+  // --- Visual Settings State (Moved from previous component) ---
+  const [flipDuration, setFlipDuration] = useState(1500); 
+  const [cardContentScale, setCardContentScale] = useState(1.0); 
+  const [showDebugMemory, setShowDebugMemory] = useState(false); 
+  const [cardBaseWidth, setCardBaseWidth] = useState(100); 
+
+  // --- Content Visibility State ---
+  const [contentVisibility, setContentVisibility] = useState({
+    meaning: true,
+    on: false,
+    kun: false,
+    strokeCount: false,
+  });
+
+  const currentBotConfig = useMemo(() => {
+    if (opponentType === OpponentTypes.CUSTOM) {
+        return customBotConfig;
+    }
+    return BOT_CONFIGS[opponentType] || BOT_CONFIGS[OpponentTypes.RANDOMIZER];
+  }, [opponentType, customBotConfig]);
+
   const isGameOver = useMemo(() => {
     return matchedPairs.size === cards.length / 2 && cards.length > 0;
   }, [matchedPairs, cards.length]);
 
-  // --- API Fetching: Fetch initial list of Jōyō Kanji ---
-  useEffect(() => {
-    const fetchKanjiList = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        // Fetch the list of all common use (Jōyō) kanji strings
-        const response = await fetch(`${API_BASE_URL}/kanji/joyo`);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        if (data.length === 0) {
-           throw new Error('API returned an empty list of kanji. Cannot start game.');
-        }
-        setKanjiCharacters(data);
-      } catch (e) {
-        console.error("Failed to fetch kanji list:", e);
-        setError(`Failed to load Kanji data from API. Error: ${e.message}`);
-      } finally {
-        setIsLoading(false);
+  // --- API Fetching: Fetch list of Kanji based on selection ---
+  const fetchKanjiList = useCallback(async (endpoint) => {
+    if (gameStarted) return; 
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/kanji/${endpoint}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
-    };
-    fetchKanjiList();
-  }, []);
+      const data = await response.json();
+      if (data.length === 0) {
+         throw new Error('API returned an empty list of kanji for this set.');
+      }
+      setKanjiCharacters(data);
+    } catch (e) {
+      console.error("Failed to fetch kanji list:", e);
+      setError(`Failed to load Kanji data from API (Set: ${endpoint}). Error: ${e.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [gameStarted]);
+
+  // --- Effect to trigger fetch when kanjiSetEndpoint changes or on mount ---
+  useEffect(() => {
+    fetchKanjiList(kanjiSetEndpoint);
+  }, [kanjiSetEndpoint, fetchKanjiList]);
+
 
   // --- Game Initialization ---
   const initializeGame = useCallback(async () => {
     if (kanjiCharacters.length === 0) {
-      setError("Cannot start game: Kanji library is empty or failed to load.");
+      const setName = Object.keys(KANJI_SETS).find(key => KANJI_SETS[key] === kanjiSetEndpoint) || 'Selected';
+      setError(`Cannot start game: ${setName} set is empty or failed to load.`);
       return;
     }
 
@@ -83,7 +165,7 @@ export default function KanjiMemoryGame() {
     const pairsNeeded = totalCards / 2;
 
     if (pairsNeeded > kanjiCharacters.length) {
-      setError(`Cannot create a ${gridSize}x${gridSize} grid. Need ${pairsNeeded} unique Kanji, but the available library only has ${kanjiCharacters.length}. Please choose a smaller grid.`);
+      setError(`Cannot create a ${gridSize}x${gridSize} grid. Need ${pairsNeeded} unique Kanji, but the available library only has ${kanjiCharacters.length}. Please choose a smaller grid or a larger kanji set.`);
       return;
     }
 
@@ -91,15 +173,13 @@ export default function KanjiMemoryGame() {
     let selectedKanjiDetails;
 
     if (reuseKanji && previousKanjiData && previousKanjiData.length >= pairsNeeded) {
-      // Reuse existing detailed data
       selectedKanjiDetails = previousKanjiData.slice(0, pairsNeeded);
     } else {
-      // 1. Select random kanji characters (strings)
       const shuffledKanjiList = [...kanjiCharacters].sort(() => Math.random() - 0.5);
       const selectedKanjiStrings = shuffledKanjiList.slice(0, pairsNeeded);
 
-      // 2. Fetch detailed data for only the selected kanji
       try {
+        // Fetch details for the selected characters
         const detailPromises = selectedKanjiStrings.map(kanji =>
           fetch(`${API_BASE_URL}/kanji/${kanji}`)
             .then(res => {
@@ -107,17 +187,25 @@ export default function KanjiMemoryGame() {
               return res.json();
             })
         );
-
         const apiResponses = await Promise.all(detailPromises);
-
-        // 3. Map API response to the required card format
+        
+        // Extract all required details (including new fields for modal)
         selectedKanjiDetails = apiResponses.map((res, index) => ({
           kanji: res.kanji,
-          meaning: res.meanings.join(', ') || 'No meaning available',
+          meaning: res.meanings.join(', ') || '—',
           kun: res.kun_readings.join(', ') || '—',
           on: res.on_readings.join(', ') || '—',
+          name_readings: res.name_readings.join(', ') || '—', // NEW
+          stroke_count: res.stroke_count,
+          grade: res.grade,
+          jlpt: res.jlpt,
+          heisig_en: res.heisig_en || '—', // NEW
+          freq_mainichi_shinbun: res.freq_mainichi_shinbun, // NEW
+          unicode: res.unicode, // NEW
+          unihan_cjk_compatibility_variant: res.unihan_cjk_compatibility_variant, // NEW
+          notes: res.notes || [], // NEW
+          wordData: null, // Placeholder for dictionary data fetched on modal open
         }));
-
         setPreviousKanjiData(selectedKanjiDetails);
       } catch (e) {
         console.error("Failed to fetch detailed kanji data:", e);
@@ -127,45 +215,57 @@ export default function KanjiMemoryGame() {
       }
     }
 
-    // 4. Create card pairs
     const cardPairs = selectedKanjiDetails.flatMap((k, idx) => [
-      // kanjiId ties the two cards together for matching purposes
       { id: idx * 2, kanjiId: idx, ...k },
       { id: idx * 2 + 1, kanjiId: idx, ...k }
     ]);
 
-    // Final shuffle
     const shuffled = cardPairs.sort(() => Math.random() - 0.5);
 
-    // Reset all game states
     setCards(shuffled);
     setFlippedIndices([]);
-    setMatchedPairs(new Set());
+    setMatchedPairs(new Set()); 
+    setMatchOwners({}); 
     setCurrentPlayer(1);
     setScores({ player1: 0, player2: 0 });
     setGameStarted(true);
     setBotMemory({});
     setReuseKanji(false);
+    setDebuffFactor(0); 
     setIsProcessing(false);
-  }, [gridSize, reuseKanji, previousKanjiData, kanjiCharacters]);
+    setShowVisualSettingsModal(false); 
+    setShowContentSettingsModal(false); 
+  }, [gridSize, reuseKanji, previousKanjiData, kanjiCharacters, kanjiSetEndpoint]);
 
   // --- User Turn Logic ---
   const handleCardClick = (index) => {
-    // Prevent interaction if processing, card is already flipped, or matched
-    if (isProcessing || flippedIndices.includes(index) || matchedPairs.has(cards[index].kanjiId)) {
+    if (isProcessing) {
+      return;
+    }
+    
+    const isRevealed = flippedIndices.includes(index) || matchedPairs.has(cards[index].kanjiId);
+    
+    // Pop-up modal if a revealed card is clicked and no match is in progress
+    // The user also requested that revealed card = scored card.
+    if (matchedPairs.has(cards[index]?.kanjiId) && flippedIndices.length === 0) {
+        setModalKanjiData(cards[index]);
+        setShowKanjiModal(true);
+        return;
+    }
+    
+    // Only allow flip if it's not matched and not already flipped
+    if (flippedIndices.includes(index) || matchedPairs.has(cards[index].kanjiId)) {
       return;
     }
 
-    // Prevent Player 1 from playing when it's Player 2's turn against an AI
     if (currentPlayer === 2 && opponentType !== OpponentTypes.PLAYER2) {
       return;
     }
 
-    // Only allow flipping up to 2 cards
     if (flippedIndices.length < 2) {
       setFlippedIndices(prev => [...prev, index]);
 
-      // If this is the first card, update bot memory immediately for maximum information
+      // Bot memory update on first user flip
       if (flippedIndices.length === 0 && opponentType !== OpponentTypes.PLAYER2) {
         setBotMemory(prev => ({
           ...prev,
@@ -179,35 +279,47 @@ export default function KanjiMemoryGame() {
     return flippedIndices.includes(index) || matchedPairs.has(cards[index]?.kanjiId);
   };
 
-  // --- Match/Turn Resolution Effect ---
+  // --- Match/Turn Resolution Effect (Updated to use flipDuration) ---
   useEffect(() => {
     if (flippedIndices.length === 2) {
       setIsProcessing(true);
       const [idx1, idx2] = flippedIndices;
       const card1 = cards[idx1];
       const card2 = cards[idx2];
+      const config = currentBotConfig;
 
+      // Wait for 1 second so the user/bot can see both cards before processing the result
       setTimeout(() => {
         if (card1.kanjiId === card2.kanjiId) {
-          // Match found - player gets another turn
+          // Match found
           setMatchedPairs(prev => new Set([...prev, card1.kanjiId]));
+          setMatchOwners(prev => ({
+              ...prev,
+              [card1.kanjiId]: currentPlayer
+          }));
           setScores(prev => ({
             ...prev,
             [`player${currentPlayer}`]: prev[`player${currentPlayer}`] + 1
           }));
           setFlippedIndices([]);
-          setIsProcessing(false);
-          // Current player keeps turn: No currentPlayer change
+          setIsProcessing(false); // Ready for next turn (same player)
+          
+          if (currentPlayer === 2) {
+              setDebuffFactor(config[12]); 
+          } else {
+              setDebuffFactor(0);
+          }
 
         } else {
-          // No match - switch player
+          // Mismatch found, wait for flipDuration before cleanup
           setTimeout(() => {
             setFlippedIndices([]);
             setCurrentPlayer(currentPlayer === 1 ? 2 : 1);
-            setIsProcessing(false);
-          }, 1000); // Cards stay visible briefly for the opponent to "see" and "remember"
+            setIsProcessing(false); // Released after the cards flip back
+            setDebuffFactor(0); 
+          }, flipDuration); 
 
-          // Update bot memory with the second flipped card (if it's not a match)
+          // Bot memory update on second flip of mismatch
           if (opponentType !== OpponentTypes.PLAYER2) {
             setBotMemory(prev => ({
               ...prev,
@@ -215,12 +327,12 @@ export default function KanjiMemoryGame() {
             }));
           }
         }
-      }, 1000); // Match check delay
+      }, 1000); // Initial visibility delay
     }
-  }, [flippedIndices, cards, currentPlayer, opponentType]);
+  }, [flippedIndices, cards, currentPlayer, opponentType, currentBotConfig, flipDuration]);
 
 
-  // --- Bot Logic Helper Functions (Memoized for efficiency) ---
+  // --- Bot Logic Helper Functions (Unchanged) ---
   const getUnmatchedCards = useCallback(() => {
     return cards
       .map((c, idx) => ({ card: c, idx }))
@@ -233,69 +345,67 @@ export default function KanjiMemoryGame() {
   }, [getUnmatchedCards]);
 
   const getRandomNewCard = useCallback(() => {
-    // Find a card that is unmatched AND not in bot memory
     const unknown = getUnmatchedCards().filter(({ idx }) => !botMemory[idx]);
     return unknown[Math.floor(Math.random() * unknown.length)]?.idx;
   }, [getUnmatchedCards, botMemory]);
 
   const getRandomKnownCard = useCallback(() => {
-    // Find a card that is unmatched AND IS in bot memory
     const known = getUnmatchedCards().filter(({ idx }) => botMemory[idx]);
     return known[Math.floor(Math.random() * known.length)]?.idx;
   }, [getUnmatchedCards, botMemory]);
 
   const getKnownPairIndices = useCallback(() => {
-    // Check if the bot knows the location of a complete, unmatched pair
     const known = Object.keys(botMemory).map(k => parseInt(k));
     for (let idx1 of known) {
-      if (matchedPairs.has(cards[idx1]?.kanjiId)) continue; // Skip if card is already matched
+      if (matchedPairs.has(cards[idx1]?.kanjiId)) continue; 
 
       const kanjiId = cards[idx1]?.kanjiId;
       if (kanjiId === undefined) continue;
 
       const pairIdx = cards.findIndex((c, i) =>
-        c.kanjiId === kanjiId && // Same kanji ID
-        i !== idx1 && // Not the same card index
-        botMemory[i] === kanjiId && // Bot knows the location of the pair
-        !matchedPairs.has(c.kanjiId) && // Pair is not matched
-        !flippedIndices.includes(i) // Pair is not currently flipped
+        c.kanjiId === kanjiId && 
+        i !== idx1 && 
+        botMemory[i] === kanjiId && 
+        !matchedPairs.has(c.kanjiId) &&
+        !flippedIndices.includes(i) 
       );
 
       if (pairIdx !== -1) return [idx1, pairIdx];
     }
-    return null; // No known pair found
+    return null; 
   }, [botMemory, cards, matchedPairs, flippedIndices]);
+
 
   // --- Bot Turn Execution ---
   const performOpponentTurn = useCallback(() => {
-    setIsProcessing(true);
-
-    const botLevel = Object.keys(OpponentTypes).find(key => OpponentTypes[key] === opponentType);
+    setIsProcessing(true); // Ensure processing stays true throughout
+    const config = currentBotConfig;
     let firstCard = null;
     let secondCard = null;
 
-    // --- Strategy for First Card ---
+    // --- 1. Strategy for First Card ---
     const knownPair = getKnownPairIndices();
-    const shouldGoForKnownPair = knownPair !== null && Math.random() < ({
-      'BOT2': 0.5,
-      'BOT3': 0.7,
-      'BOT4': 0.95
-    }[botLevel] || 0); // Probability of attempting to go for a known pair
+    const shouldGoForKnownPair = knownPair !== null && (Math.random() * 100 < config[0]);
 
-    // If the bot decides to attempt a known pair, the first flip is the first index of that pair.
     if (shouldGoForKnownPair) {
       firstCard = knownPair[0];
-    } else if (botLevel === 'RANDOMIZER') {
-      firstCard = getRandomUnmatchedIndex();
-    } else if (Math.random() < 0.8) {
-      // 80% chance to flip a card the bot hasn't seen (exploration)
-      firstCard = getRandomNewCard() ?? getRandomUnmatchedIndex();
     } else {
-      // 20% chance to flip a card the bot has seen (revisiting memory)
-      firstCard = getRandomKnownCard() ?? getRandomUnmatchedIndex();
+      const options = [
+        { weight: config[1], action: 'known' }, 
+        { weight: config[2], action: 'new' },   
+        { weight: config[3], action: 'random' }, 
+      ];
+      const action = selectWeightedOption(options);
+
+      if (action === 'known') {
+        firstCard = getRandomKnownCard() ?? getRandomUnmatchedIndex();
+      } else if (action === 'new') {
+        firstCard = getRandomNewCard() ?? getRandomUnmatchedIndex();
+      } else { 
+        firstCard = getRandomUnmatchedIndex();
+      }
     }
 
-    // If no card can be selected (shouldn't happen unless game is over, but safety check)
     if (firstCard === null) {
       setIsProcessing(false);
       return;
@@ -305,61 +415,70 @@ export default function KanjiMemoryGame() {
     setFlippedIndices([firstCard]);
     setBotMemory(prev => ({ ...prev, [firstCard]: cards[firstCard].kanjiId }));
 
-    // --- Strategy for Second Card (after seeing the first) ---
+    // Delay before picking the second card (Bot "thinking" time)
     setTimeout(() => {
       const firstKanjiId = cards[firstCard].kanjiId;
-      const confidence = { // Confidence/Accuracy of retrieving a matching card from memory
-        'BOT0': 0.2,
-        'BOT1': 0.3,
-        'BOT2': 0.4,
-        'BOT3': 0.7,
-        'BOT4': 0.9
-      }[botLevel] || 0;
-
-      // Find the potential matching card in memory
       const matchIdx = cards.findIndex((c, i) =>
-        c.kanjiId === firstKanjiId &&
-        i !== firstCard &&
-        botMemory[i] === firstKanjiId && // Must be in memory
-        !matchedPairs.has(c.kanjiId)
+        c.kanjiId === firstKanjiId && i !== firstCard && botMemory[i] === firstKanjiId && !matchedPairs.has(c.kanjiId)
       );
 
-      // CRITICAL CHANGE: Even if a match is found in memory (matchIdx !== -1),
-      // the bot must still pass the confidence check to successfully retrieve it.
-      if (matchIdx !== -1 && Math.random() < confidence) {
-        // High confidence match success
-        secondCard = matchIdx;
+      const isMatchKnown = matchIdx !== -1;
+      let secondCardAction;
+      let options;
+
+      if (isMatchKnown) {
+        const randomCloseWeight = config[8] + debuffFactor;
+        
+        options = [
+          { weight: config[7], action: 'match' },         
+          { weight: randomCloseWeight, action: 'random_close' }, 
+          { weight: config[9], action: 'random' },        
+          { weight: config[10], action: 'new' },          
+          { weight: config[11], action: 'known' },         
+        ];
+        
+        secondCardAction = selectWeightedOption(options);
+        
       } else {
-        // Fallback or strategic randomness (Missed the known match or it was an exploration flip)
-        const rand = Math.random();
-        if (rand < 0.75) { // Prioritize flipping a new, unknown card (exploration)
-          secondCard = getRandomNewCard() ?? getRandomUnmatchedIndex();
-        } else { // Or flip a known card (trying to pair up a different known card)
-          secondCard = getRandomKnownCard() ?? getRandomUnmatchedIndex();
-        }
+        options = [
+          { weight: config[4], action: 'known' },  
+          { weight: config[5], action: 'new' },    
+          { weight: config[6], action: 'random' }, 
+        ];
+        secondCardAction = selectWeightedOption(options);
       }
 
-      // Safety check: ensure second card is not the same as the first card and is valid
-      if (secondCard === firstCard || secondCard === null) {
-        // Try to pick a new random unmatched card if the logic failed
-        secondCard = getUnmatchedCards()
-          .map(c => c.idx)
-          .filter(idx => idx !== firstCard)
-          [Math.floor(Math.random() * (getUnmatchedCards().length - 1))] ?? getRandomUnmatchedIndex();
+      // 3. Resolve the selected action to an actual card index
+      if (secondCardAction === 'match') {
+        secondCard = matchIdx; 
+      } else if (secondCardAction === 'random_close' || secondCardAction === 'random') {
+        secondCard = getRandomUnmatchedIndex();
+      } else if (secondCardAction === 'known') {
+        secondCard = getRandomKnownCard() ?? getRandomUnmatchedIndex();
+      } else if (secondCardAction === 'new') {
+        secondCard = getRandomNewCard() ?? getRandomUnmatchedIndex();
       }
 
-      // Flip the second card
+      // Final Safety Check
+      const availableUnmatched = getUnmatchedCards().map(c => c.idx).filter(idx => idx !== firstCard);
+      
+      if (secondCard === null || secondCard === firstCard || !availableUnmatched.includes(secondCard)) {
+        secondCard = availableUnmatched[Math.floor(Math.random() * availableUnmatched.length)] ?? getRandomUnmatchedIndex();
+      }
+      
+      // Flip the second card (This immediately triggers the match resolution useEffect)
       setFlippedIndices([firstCard, secondCard]);
-      // Memory update for second card is handled in the main match useEffect
-    }, 1000); // Short delay to simulate "thinking" after the first flip
-  }, [opponentType, cards, getKnownPairIndices, getRandomNewCard, getRandomKnownCard, getRandomUnmatchedIndex, botMemory, matchedPairs, getUnmatchedCards]);
+      // isProcessing remains true, the match resolution useEffect will release it.
+
+    }, 1000); // Bot's "thinking" delay
+  }, [currentBotConfig, cards, getKnownPairIndices, getRandomNewCard, getRandomKnownCard, getRandomUnmatchedIndex, botMemory, matchedPairs, debuffFactor]);
+
 
   // --- Bot Turn Trigger Effect ---
   useEffect(() => {
     const isBotTurn = currentPlayer === 2 && opponentType !== OpponentTypes.PLAYER2;
     if (isBotTurn && gameStarted && !isProcessing && !isGameOver) {
-      // Delay before the bot's move starts
-      const turnDelay = 1500;
+      const turnDelay = 500; // Shorter delay before the bot's *first* move
       const timer = setTimeout(() => {
         performOpponentTurn();
       }, turnDelay);
@@ -367,46 +486,262 @@ export default function KanjiMemoryGame() {
     }
   }, [currentPlayer, gameStarted, isProcessing, isGameOver, opponentType, performOpponentTurn]);
 
-  // --- Presentation Components ---
+  // --- Modal Components ---
 
+  const ContentSettingsModal = ({ onClose }) => {
+    const settingsMap = {
+      meaning: { label: 'Meaning', key: 'meaning' },
+      on: { label: 'On-Yomi', key: 'on' },
+      kun: { label: 'Kun-Yomi', key: 'kun' },
+      strokeCount: { label: 'Stroke Count', key: 'strokeCount' },
+    };
+
+    const toggleSetting = (key) => {
+      setContentVisibility(prev => ({
+        ...prev,
+        [key]: !prev[key]
+      }));
+    };
+
+    return (
+        <SettingsModalWrapper title="Card Content Settings" onClose={onClose}>
+            <p className="text-gray-600 mb-6">
+                Use these buttons to define what auxiliary information is displayed on the face of a **matched (scored) card**.
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+                {Object.values(settingsMap).map(({ label, key }) => (
+                    <button
+                        key={key}
+                        onClick={() => toggleSetting(key)}
+                        className={`
+                            p-3 rounded-lg font-bold text-sm transition-colors duration-200 shadow-md flex items-center justify-center gap-2
+                            ${contentVisibility[key] 
+                                ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                            }
+                        `}
+                    >
+                        {contentVisibility[key] ? <Check size={18}/> : <X size={18}/>}
+                        {label}
+                    </button>
+                ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-4 text-center">
+                The full Kanji Details (including Name Readings, Heisig, and Word Lists) are always available by clicking on any matched card.
+            </p>
+        </SettingsModalWrapper>
+    );
+  };
+
+  const VisualSettingsModal = ({ isBot, onClose }) => (
+    <SettingsModalWrapper title="Visual & Timing Settings" onClose={onClose}>
+      <h3 className="text-lg font-bold mb-3 text-indigo-700 flex items-center gap-2">
+        <Grid size={20} /> Card & Board Sizing
+      </h3>
+
+      {/* Card Base Width */}
+      <div className="mb-4 bg-indigo-50 p-3 rounded-lg">
+        <label className="block text-sm font-medium mb-1 text-gray-700">
+          Card Base Width: **{cardBaseWidth}px**
+        </label>
+        <input
+          type="range"
+          min="80"
+          max="150"
+          step="10"
+          value={cardBaseWidth}
+          onChange={(e) => setCardBaseWidth(parseInt(e.target.value))}
+          className="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer range-sm"
+        />
+        <p className="text-xs text-gray-500 mt-1">Adjusts the minimum size of each card in the grid.</p>
+      </div>
+
+      {/* Card Content Scale */}
+      <div className="mb-6 bg-indigo-50 p-3 rounded-lg">
+        <label className="block text-sm font-medium mb-1 text-gray-700">
+          Card Content Scale: **{cardContentScale.toFixed(1)}x**
+        </label>
+        <input
+          type="range"
+          min="0.5"
+          max="1.5"
+          step="0.1"
+          value={cardContentScale}
+          onChange={(e) => setCardContentScale(parseFloat(e.target.value))}
+          className="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer range-sm"
+        />
+        <p className="text-xs text-gray-500 mt-1">Adjusts the size of the Kanji and text inside the card.</p>
+      </div>
+      
+      <h3 className="text-lg font-bold mb-3 text-indigo-700 flex items-center gap-2">
+        <Info size={20} /> Timing & Debug
+      </h3>
+
+      {/* Flip Duration */}
+      <div className="mb-4 bg-indigo-50 p-3 rounded-lg">
+        <label className="block text-sm font-medium mb-1 text-gray-700">
+          Wrong Match Display Duration: **{(flipDuration / 1000).toFixed(1)}s**
+        </label>
+        <input
+          type="range"
+          min="500"
+          max="3000"
+          step="100"
+          value={flipDuration}
+          onChange={(e) => setFlipDuration(parseInt(e.target.value))}
+          className="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer range-sm"
+        />
+        <p className="text-xs text-gray-500 mt-1">How long mismatched cards stay flipped before closing.</p>
+      </div>
+
+      {/* Bot Debug Toggle (Only show if opponent is a bot) */}
+      {isBot && (
+        <div className="pt-2 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+            <label className="flex items-center gap-2 cursor-pointer text-gray-700">
+                <input
+                    type="checkbox"
+                    checked={showDebugMemory}
+                    onChange={(e) => setShowDebugMemory(e.target.checked)}
+                    className="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500"
+                />
+                <span className="text-sm font-medium">Show Bot Memory (Debug Mode)</span>
+            </label>
+            <p className="text-xs text-gray-500 mt-1 pl-6">Reveals the cards the bot has memorized during its turn.</p>
+        </div>
+      )}
+    </SettingsModalWrapper>
+  );
+
+  const SettingsModalWrapper = ({ title, children, onClose }) => (
+    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 transition-opacity duration-300">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 transform scale-100 animate-in fade-in zoom-in-50 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-4 border-b pb-3">
+                <h2 className="text-2xl font-extrabold text-gray-800 flex items-center gap-2">
+                    <Settings size={24} className="text-purple-600"/> {title}
+                </h2>
+                <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-100 transition text-gray-500">
+                    <X size={24} />
+                </button>
+            </div>
+            {children}
+        </div>
+    </div>
+  );
+
+  const CustomBotSettings = ({ config, onConfigChange }) => {
+    // ... (Bot settings component remains mostly unchanged, now appears in setup/visual modal)
+    const fields = [
+        { key: 0, label: '0. 1st Card: P Match Attempt (0-100)', min: 0, max: 100, help: 'Probability to start a turn by attempting a known pair.' },
+        { key: 1, label: '1. 1st Card: Known (W)', min: 0, max: 100, help: 'Weight to flip a card already in memory.' },
+        { key: 2, label: '2. 1st Card: New (W)', min: 0, max: 100, help: 'Weight to flip a card bot has never seen.' },
+        { key: 3, label: '3. 1st Card: Random (W)', min: 0, max: 100, help: 'Weight to flip any random unmatched card.' },
+        { key: 4, label: '4. 2nd UK: Known (W)', min: 0, max: 100, help: 'If match is UNKNOWN, weight to pick a known card.' },
+        { key: 5, label: '5. 2nd UK: New (W)', min: 0, max: 100, help: 'If match is UNKNOWN, weight to pick a new card.' },
+        { key: 6, label: '6. 2nd UK: Random (W)', min: 0, max: 100, help: 'If match is UNKNOWN, weight to pick a random card.' },
+        { key: 7, label: '7. 2nd K: Exact Match (W)', min: 0, max: 100, help: 'If match is KNOWN, weight to flip the exact match.' },
+        { key: 8, label: '8. 2nd K: Random Close (W)', min: 0, max: 100, help: 'Base weight for random fallback. Receives Debuff (index 12).' },
+        { key: 9, label: '9. 2nd K: Random (W)', min: 0, max: 100, help: 'If match is KNOWN, weight to flip any random card.' },
+        { key: 10, label: '10. 2nd K: New (W)', min: 0, max: 100, help: 'If match is KNOWN, weight to flip a new card.' },
+        { key: 11, label: '11. 2nd K: Known (W)', min: 0, max: 100, help: 'If match is KNOWN, weight to flip another known card (not the match).' },
+        { key: 12, label: '12. Anti-Combo Debuff (0-10)', min: 0, max: 10, help: 'Value added to "Random Close" (index 8) after a successful match (next turn only).' },
+    ];
+
+    const handleChange = (key, value) => {
+        onConfigChange(prev => {
+            const newConfig = [...prev];
+            newConfig[key] = parseInt(value, 10);
+            return newConfig;
+        });
+    };
+
+    return (
+      <div className="mt-8 bg-gray-100 p-4 rounded-lg shadow-inner">
+        <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-700">
+          <Settings size={20} /> Custom Bot Weights
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 max-h-[300px] overflow-y-auto pr-2">
+          {fields.map(field => (
+            <div key={field.key} className="flex flex-col">
+              <label className="text-sm font-semibold text-gray-700 mb-1 leading-tight">
+                {field.label}: **{config[field.key]}**
+              </label>
+              <input
+                type="range"
+                min={field.min}
+                max={field.max}
+                step="1"
+                value={config[field.key]}
+                onChange={(e) => handleChange(field.key, e.target.value)}
+                className="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer range-sm"
+              />
+              <p className="text-xs text-gray-500 mt-1">{field.help}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // --- Card Component (Updated for Green/Red color coding and scaling) ---
   const Card = ({ card, index }) => {
     const flipped = isCardFlipped(index);
     const matched = matchedPairs.has(card.kanjiId);
     const isBotKnown = botMemory[index] !== undefined && opponentType !== OpponentTypes.PLAYER2;
+    const owner = matchOwners[card.kanjiId];
 
-    // Responsive font size logic: Kanji must shrink aggressively on high density grids (8x8)
-    const kanjiTextSizeClasses = gridSize === 4 
-      ? 'text-6xl sm:text-7xl' // Largest for 4x4
-      : gridSize === 6 
-        ? 'text-4xl sm:text-5xl' // Medium for 6x6
-        : 'text-3xl sm:text-4xl'; // Smallest for 8x8
+    // Card Content Scaling
+    const kanjiFontSize = `${4 * cardContentScale}rem`;
+    const auxFontSize = `${0.6 * cardContentScale}rem`; 
+
+    // Updated match colors: Green for Player 1, Red for Player 2/Bot
+    const matchedClasses = owner === 1
+        ? 'ring-4 ring-green-500 bg-green-50 opacity-100' // Player 1 (Green)
+        : owner === 2
+            ? 'ring-4 ring-red-500 bg-red-50 opacity-100' // Player 2/Bot (Red)
+            : 'ring-4 ring-gray-300 opacity-90'; // Safety fallback
+
+    // Content lines to display based on visibility settings
+    const contentLines = [];
+    if (contentVisibility.meaning) {
+        contentLines.push(<div key="meaning" className="text-gray-700 font-semibold leading-tight">{card.meaning}</div>);
+    }
+    if (contentVisibility.on) {
+        contentLines.push(<div key="on" className="text-gray-500 leading-tight">On: {card.on}</div>);
+    }
+    if (contentVisibility.kun) {
+        contentLines.push(<div key="kun" className="text-gray-500 leading-tight">Kun: {card.kun}</div>);
+    }
+    if (contentVisibility.strokeCount) {
+         contentLines.push(<div key="strokes" className="text-gray-500 leading-tight">Strokes: {card.stroke_count}</div>);
+    }
 
     return (
       <div
         onClick={() => handleCardClick(index)}
+        // Added minWidth/minHeight to respect the cardBaseWidth setting
+        style={{ minWidth: `${cardBaseWidth}px`, minHeight: `${cardBaseWidth}px` }}
         className={`
           relative aspect-square rounded-xl shadow-lg transform transition-all duration-300 ease-in-out
           ${flipped || matched
-            ? 'bg-white shadow-2xl scale-100'
+            ? 'bg-white shadow-2xl scale-100 cursor-pointer' // Allow clicking revealed cards for modal
             : 'bg-gradient-to-br from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 cursor-pointer hover:scale-[1.03]'
           }
-          ${matched ? 'ring-4 ring-green-400 opacity-90' : 'opacity-100'}
+          ${matched ? matchedClasses : 'opacity-100'}
         `}
       >
-        {/* Card Content (Front or Back) */}
-        <div className={`flex items-center justify-center h-full w-full p-2 absolute inset-0 backface-hidden ${flipped || matched ? 'opacity-100' : 'opacity-0'}`}>
+        <div className={`flex items-center justify-center h-full w-full p-1 absolute inset-0 backface-hidden ${flipped || matched ? 'opacity-100' : 'opacity-0'}`}>
           {flipped || matched ? (
-            <div className={`text-center transition-all duration-300 ${matched ? 'text-gray-800' : 'text-gray-900'}`}>
-              {/* Kanji Character (Responsive Font size scales with grid size) */}
-              <div className={`font-bold transition-transform duration-300 ${kanjiTextSizeClasses}`}>
+            <div className="text-center transition-all duration-300 text-gray-900">
+              <div 
+                style={{ fontSize: kanjiFontSize }}
+                className="font-bold leading-none transition-transform duration-300"
+              >
                 {card.kanji}
               </div>
-
-              {/* Meaning and Readings for matched cards */}
-              {matched && (
-                <div className="text-[10px] sm:text-xs mt-1 text-gray-500">
-                  <div className="font-semibold text-indigo-600">{card.meaning}</div>
-                  <div>Kun: {card.kun} | On: {card.on}</div>
+              {/* Auxiliary content is now conditionally rendered */}
+              {matched && contentLines.length > 0 && (
+                <div style={{ fontSize: auxFontSize }} className="mt-1 hidden sm:block">
+                    {contentLines.map(line => line)}
                 </div>
               )}
             </div>
@@ -414,26 +749,208 @@ export default function KanjiMemoryGame() {
             <div className="text-white text-3xl font-bold select-none">?</div>
           )}
         </div>
-
-        {/* Debug/Bot Known Indicator */}
         {showDebugMemory && isBotKnown && !matched && !flipped && (
-          <div className="absolute top-1 right-1 bg-yellow-400 text-yellow-900 text-[10px] px-2 py-0.5 rounded-full font-semibold">
-            BOT KNOWS
+          <div className="absolute top-1 right-1 bg-yellow-400 text-yellow-900 text-[10px] px-2 py-0.5 rounded-full font-semibold z-10">
+            MEM
           </div>
         )}
       </div>
     );
   };
 
-  const currentOpponentName = opponentType === OpponentTypes.PLAYER2 ? 'Player 2' : opponentType;
+  // --- Kanji Detail Modal Component (EXTENDED) ---
+  const KanjiDetailModal = ({ data, onClose }) => {
+    const [wordData, setWordData] = useState(data.wordData);
+    const [isWordsLoading, setIsWordsLoading] = useState(false);
+    const [wordError, setWordError] = useState(null);
 
-  // --- Main Render Block ---
+    // Fetch word data on mount if not already present
+    useEffect(() => {
+        if (!data.kanji || wordData) return;
+
+        const fetchWordData = async () => {
+            setIsWordsLoading(true);
+            setWordError(null);
+            try {
+                const response = await fetch(`${API_BASE_URL}/words/${data.kanji}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const responseData = await response.json();
+                setWordData(responseData);
+
+                // Update the card data in the main state to cache the word data
+                setCards(prevCards => prevCards.map(c => 
+                    c.kanji === data.kanji ? { ...c, wordData: responseData } : c
+                ));
+
+            } catch (e) {
+                console.error("Failed to fetch word data:", e);
+                setWordError("Could not load associated dictionary words.");
+            } finally {
+                setIsWordsLoading(false);
+            }
+        };
+
+        fetchWordData();
+    }, [data.kanji, wordData]);
+
+    if (!data) return null;
+
+    const gradeLabel = data.grade ? `Grade ${data.grade}` : 'N/A';
+    const jlptLabel = data.jlpt ? `N${data.jlpt}` : 'N/A';
+    const freqLabel = data.freq_mainichi_shinbun ? `#${data.freq_mainichi_shinbun}` : 'N/A';
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 transition-opacity duration-300">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl p-6 transform scale-100 animate-in fade-in zoom-in-50 max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-start mb-4 border-b pb-3">
+                    <h2 className="text-2xl font-extrabold text-gray-800 flex items-center gap-2">
+                        <BookOpen size={24} className="text-indigo-600"/> Kanji Details: {data.kanji}
+                    </h2>
+                    <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-100 transition text-gray-500">
+                        <X size={24} />
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* Column 1: Core Readings & Meanings */}
+                    <div className="md:col-span-2">
+                        <div className="text-center mb-6 border-b pb-4">
+                            <p className="text-[6rem] sm:text-[8rem] font-black text-indigo-700 leading-none">{data.kanji}</p>
+                            <p className="text-2xl font-bold text-gray-700 mt-2">{data.meaning}</p>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-700 mb-1">On-yomi (音)</h3>
+                                <p className="text-gray-900 ml-3 p-2 bg-purple-50 rounded-lg text-sm">{data.on}</p>
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-700 mb-1">Kun-yomi (訓)</h3>
+                                <p className="text-gray-900 ml-3 p-2 bg-purple-50 rounded-lg text-sm">{data.kun}</p>
+                            </div>
+                        </div>
+
+                        {data.name_readings !== '—' && (
+                            <div className="mt-4">
+                                <h3 className="text-lg font-bold text-gray-700 mb-1">Name Readings (名乗り)</h3>
+                                <p className="text-gray-900 ml-3 p-2 bg-purple-50 rounded-lg text-sm">{data.name_readings}</p>
+                            </div>
+                        )}
+                        
+                        {data.notes.length > 0 && (
+                            <div className="mt-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                                <h3 className="text-lg font-bold text-yellow-700 flex items-center gap-2 mb-1">
+                                    <Info size={18} /> Notes
+                                </h3>
+                                <ul className="list-disc list-inside text-gray-800 text-sm ml-3">
+                                    {data.notes.map((note, i) => <li key={i}>{note}</li>)}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Column 2: Metadata and Heisig */}
+                    <div className="md:col-span-1 border-l pl-6 border-gray-100">
+                        <h3 className="text-xl font-bold text-gray-700 mb-3">Classification</h3>
+                        <div className="space-y-3">
+                            <MetadataItem label="Stroke Count" value={data.stroke_count} />
+                            <MetadataItem label="School Grade" value={gradeLabel} />
+                            <MetadataItem label="JLPT Level" value={jlptLabel} />
+                            <MetadataItem label="Frequency Rank" value={freqLabel} help="Ranked out of 2,501 most-used characters." />
+                            <MetadataItem label="Heisig Keyword" value={data.heisig_en} />
+                            <MetadataItem label="Unicode" value={`U+${data.unicode}`} />
+                            {data.unihan_cjk_compatibility_variant && (
+                                <MetadataItem label="Variant" value={data.unihan_cjk_compatibility_variant} help="CJK Compatibility Variant" />
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Dictionary Words Section */}
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                    <h2 className="text-2xl font-extrabold text-gray-800 flex items-center gap-2 mb-4">
+                        <List size={24} className="text-indigo-600"/> Associated Words
+                    </h2>
+                    
+                    {isWordsLoading && (
+                        <div className="flex items-center justify-center p-6 text-indigo-600">
+                            <Loader size={24} className="animate-spin mr-3" /> Loading Dictionary Entries...
+                        </div>
+                    )}
+
+                    {wordError && <p className="text-red-500 p-4 bg-red-50 rounded-lg">{wordError}</p>}
+                    
+                    {!isWordsLoading && wordData && wordData.length > 0 && (
+                        <div className="space-y-4 max-h-80 overflow-y-auto pr-2">
+                            {wordData.slice(0, 10).map((word, index) => (
+                                <div key={index} className="p-4 border border-gray-200 rounded-lg bg-gray-50 shadow-sm">
+                                    {word.variants.map((variant, vIndex) => (
+                                        <div key={vIndex} className="flex items-baseline mb-2">
+                                            <span className="text-xl font-bold text-gray-900 mr-3">{variant.written}</span>
+                                            <span className="text-lg text-indigo-600">({variant.pronounced})</span>
+                                        </div>
+                                    ))}
+                                    <ul className="list-none space-y-1 ml-4 text-sm text-gray-700">
+                                        {word.meanings.map((meaning, mIndex) => (
+                                            <li key={mIndex} className="flex items-start">
+                                                <CornerDownRight size={16} className="text-gray-400 mr-2 flex-shrink-0 mt-1"/>
+                                                {meaning.glosses.join('; ')}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            ))}
+                            {wordData.length > 10 && <p className="text-sm text-center text-gray-500 mt-2">...and {wordData.length - 10} more words.</p>}
+                        </div>
+                    )}
+                    
+                    {!isWordsLoading && wordData && wordData.length === 0 && (
+                        <p className="p-4 bg-yellow-50 rounded-lg text-gray-700">No common dictionary entries found for this kanji.</p>
+                    )}
+                </div>
+
+                <button
+                    onClick={onClose}
+                    className="w-full mt-6 bg-indigo-600 text-white py-3 rounded-full font-bold hover:bg-indigo-700 transition shadow-md"
+                >
+                    Close Kanji Details
+                </button>
+            </div>
+        </div>
+    );
+  };
+
+  // Simple component for modal metadata
+  const MetadataItem = ({ label, value, help = '' }) => (
+    <div className="flex justify-between items-center p-2 bg-gray-50 rounded-lg">
+        <div>
+            <p className="text-sm font-semibold text-gray-500">{label}</p>
+            {help && <p className="text-[10px] text-gray-400">{help}</p>}
+        </div>
+        <p className="text-lg font-extrabold text-gray-800">{value}</p>
+    </div>
+  );
+
+
+  const currentOpponentName = opponentType === OpponentTypes.PLAYER2 ? 'Player 2' : opponentType.split(': ')[1] || opponentType;
+
+  // Find the user-friendly name of the current kanji set for display
+  const currentKanjiSetName = useMemo(() => {
+    return Object.keys(KANJI_SETS).find(key => KANJI_SETS[key] === kanjiSetEndpoint) || kanjiSetEndpoint;
+  }, [kanjiSetEndpoint]);
+  
+  // Calculate grid maximum width based on settings (assuming 12px gap for gap-3)
+  const totalGridWidth = gridSize * cardBaseWidth + (gridSize - 1) * 12; 
+
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="flex items-center space-x-3 text-lg font-semibold text-indigo-600">
           <Loader size={24} className="animate-spin" />
-          <span>Loading Kanji Library from API...</span>
+          <span>Loading **{currentKanjiSetName}** Kanji Set...</span>
         </div>
       </div>
     );
@@ -449,10 +966,10 @@ export default function KanjiMemoryGame() {
           </div>
           <p className="mt-2 text-sm">{error}</p>
           <button
-             onClick={() => window.location.reload()}
+             onClick={() => { setError(null); fetchKanjiList(kanjiSetEndpoint); }}
              className="mt-4 bg-red-600 text-white px-4 py-2 rounded-full text-sm hover:bg-red-700 transition"
            >
-             Try Reloading
+             Try Reloading Set
            </button>
         </div>
       </div>
@@ -460,33 +977,82 @@ export default function KanjiMemoryGame() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans p-4 sm:p-8">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen bg-gray-50 font-sans p-2 sm:p-4 md:p-6 flex flex-col">
+      <div className="max-w-6xl mx-auto w-full flex-grow flex flex-col">
+        
+        {/* --- Modals --- */}
+        {showKanjiModal && <KanjiDetailModal data={modalKanjiData} onClose={() => setShowKanjiModal(false)} />}
+        {showContentSettingsModal && <ContentSettingsModal onClose={() => setShowContentSettingsModal(false)} />}
+        {showVisualSettingsModal && (
+            <VisualSettingsModal 
+                isBot={opponentType !== OpponentTypes.PLAYER2 && opponentType !== OpponentTypes.RANDOMIZER}
+                onClose={() => setShowVisualSettingsModal(false)}
+            />
+        )}
+
+
         {/* --- Header --- */}
-        <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
+        <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-2">
           <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-800">
             <span className="text-indigo-600">漢字</span> Memory Game
           </h1>
           {gameStarted && (
-            <button
-              onClick={() => setGameStarted(false)}
-              className="w-full sm:w-auto bg-indigo-600 text-white px-5 py-2 rounded-full font-semibold hover:bg-indigo-700 transition flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
-            >
-              <RotateCcw size={20} />
-              New Game
-            </button>
+            <div className="flex gap-3 w-full sm:w-auto">
+                {/* Content Settings Modal Button (Left) */}
+              <button
+                  onClick={() => setShowContentSettingsModal(true)}
+                  className="w-1/2 sm:w-auto bg-gray-200 text-gray-800 px-4 py-2 rounded-full font-semibold hover:bg-gray-300 transition flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
+              >
+                  <List size={20} /> Content
+              </button>
+                {/* Visual Settings Modal Button (Right) */}
+              <button
+                  onClick={() => setShowVisualSettingsModal(true)}
+                  className="w-1/2 sm:w-auto bg-gray-200 text-gray-800 px-4 py-2 rounded-full font-semibold hover:bg-gray-300 transition flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
+              >
+                  <Grid size={20} /> Visual
+              </button>
+              <button
+                onClick={() => setGameStarted(false)}
+                className="w-full sm:w-auto bg-indigo-600 text-white px-5 py-2 rounded-full font-semibold hover:bg-indigo-700 transition flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
+              >
+                <RotateCcw size={20} />
+                New Game
+              </button>
+            </div>
           )}
         </div>
-
+        
         {/* --- Game Setup --- */}
         {!gameStarted ? (
-          <div className="bg-white rounded-xl shadow-2xl p-6 sm:p-10 max-w-lg mx-auto border-t-4 border-indigo-500">
+          <div className="bg-white rounded-xl shadow-2xl p-6 sm:p-10 max-w-2xl mx-auto border-t-4 border-indigo-500 w-full">
             <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">Game Setup</h2>
 
             <div className="space-y-6">
-              {/* Grid Size Slider */}
+              
+              {/* Kanji Set Selector */}
               <div>
-                <label className="block text-sm font-medium mb-2 text-gray-600">Grid Size: {gridSize}x{gridSize} ({gridSize * gridSize} cards)</label>
+                <label className="block text-sm font-medium mb-2 text-gray-600">Select Kanji Set</label>
+                <select
+                  value={kanjiSetEndpoint}
+                  onChange={(e) => {
+                    setKanjiSetEndpoint(e.target.value);
+                    setPreviousKanjiData(null); 
+                  }}
+                  className="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                  disabled={isLoading}
+                >
+                  {Object.entries(KANJI_SETS).map(([name, endpoint]) => (
+                    <option key={endpoint} value={endpoint}>{name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Grid Size Slider */}
+              <div className="pt-2">
+                <label className="block text-sm font-medium mb-2 text-gray-600">
+                    Board Size (Controls Card Count): **{gridSize}x{gridSize}** ({gridSize * gridSize} cards)
+                </label>
                 <input
                   type="range"
                   min="4"
@@ -496,6 +1062,7 @@ export default function KanjiMemoryGame() {
                   onChange={(e) => setGridSize(parseInt(e.target.value))}
                   className="w-full h-2 bg-indigo-100 rounded-lg appearance-none cursor-pointer range-lg"
                 />
+                <p className="text-xs text-gray-500 mt-1">Larger grids require more unique kanji and result in smaller cards to fit the screen.</p>
               </div>
 
               {/* Opponent Selector */}
@@ -510,6 +1077,33 @@ export default function KanjiMemoryGame() {
                     <option key={type} value={type}>{type}</option>
                   ))}
                 </select>
+              </div>
+
+              {/* Custom Bot Settings */}
+              {opponentType === OpponentTypes.CUSTOM && (
+                <CustomBotSettings 
+                    config={customBotConfig} 
+                    onConfigChange={setCustomBotConfig} 
+                />
+              )}
+
+              {/* Quick Settings Access */}
+              <div className="pt-4 border-t border-gray-200">
+                <h3 className="text-lg font-bold mb-3 text-gray-700">Quick Settings Access:</h3>
+                <div className="flex gap-4">
+                    <button
+                        onClick={() => setShowContentSettingsModal(true)}
+                        className="flex-1 bg-purple-100 text-purple-700 px-4 py-2 rounded-full font-semibold hover:bg-purple-200 transition flex items-center justify-center gap-2"
+                    >
+                        <List size={18} /> Card Content
+                    </button>
+                    <button
+                        onClick={() => setShowVisualSettingsModal(true)}
+                        className="flex-1 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-full font-semibold hover:bg-indigo-200 transition flex items-center justify-center gap-2"
+                    >
+                        <Grid size={18} /> Visuals
+                    </button>
+                </div>
               </div>
 
               {/* Reuse Kanji Option */}
@@ -530,73 +1124,79 @@ export default function KanjiMemoryGame() {
 
             <button
               onClick={initializeGame}
-              // Disable if currently fetching the initial list (though handled by the loader screen, good practice)
-              disabled={kanjiCharacters.length === 0}
+              disabled={kanjiCharacters.length === 0 || isLoading}
               className={`w-full mt-8 py-3 rounded-full font-bold text-lg transition shadow-lg hover:shadow-xl transform hover:scale-[1.01] ${
-                kanjiCharacters.length === 0 
+                kanjiCharacters.length === 0 || isLoading 
                   ? 'bg-gray-400 cursor-not-allowed'
                   : 'bg-green-500 text-white hover:bg-green-600'
               }`}
             >
-              Start Game
+              {isLoading ? 'Loading...' : 'Start Game'}
             </button>
              {kanjiCharacters.length > 0 && (
                 <p className="text-xs text-center text-gray-500 mt-2">
-                    Using a library of {kanjiCharacters.length} Jōyō Kanji from the API.
+                    **{currentKanjiSetName}** set loaded: **{kanjiCharacters.length}** unique kanji available.
                 </p>
             )}
           </div>
         ) : (
           <>
             {/* --- Game Status and Scoreboard --- */}
-            <div className="bg-white rounded-xl shadow-2xl p-4 sm:p-6 mb-6 border-t-4 border-purple-500">
+            <div className="bg-white rounded-xl shadow-2xl p-4 sm:p-6 mb-4 border-t-4 border-purple-500">
               <div className="flex flex-col sm:flex-row justify-between items-center text-center sm:text-left gap-4">
 
-                {/* Player 1 Score */}
-                <div className={`p-3 rounded-lg w-full sm:w-1/2 transition-all ${currentPlayer === 1 ? 'bg-indigo-100 ring-2 ring-indigo-500' : 'bg-gray-50'}`}>
+                {/* Player 1 Score (Green Highlight) */}
+                <div className={`p-3 rounded-lg w-full sm:w-1/2 transition-all ${currentPlayer === 1 ? 'bg-green-100 ring-2 ring-green-500' : 'bg-gray-50'}`}>
                   <div className="text-sm font-medium text-gray-600 flex items-center justify-center sm:justify-start gap-2">
-                    <Users size={18} className="text-indigo-600" /> Player 1 (You)
+                    <Users size={18} className="text-green-600" /> Player 1 (You)
                   </div>
                   <h3 className="text-3xl font-extrabold text-gray-900 mt-1">{scores.player1} pairs</h3>
                   {currentPlayer === 1 && <span className="text-xs font-bold text-green-600 block mt-1">● YOUR TURN</span>}
                 </div>
 
-                {/* Opponent Score */}
-                <div className={`p-3 rounded-lg w-full sm:w-1/2 transition-all ${currentPlayer === 2 ? 'bg-indigo-100 ring-2 ring-indigo-500' : 'bg-gray-50'}`}>
+                {/* Opponent Score (Red Highlight) */}
+                <div className={`p-3 rounded-lg w-full sm:w-1/2 transition-all ${currentPlayer === 2 ? 'bg-red-100 ring-2 ring-red-500' : 'bg-gray-50'}`}>
                   <div className="text-sm font-medium text-gray-600 flex items-center justify-center sm:justify-end gap-2">
-                    {opponentType === OpponentTypes.PLAYER2 ? <Users size={18} className="text-purple-600" /> : <Brain size={18} className="text-purple-600" />}
+                    {opponentType === OpponentTypes.PLAYER2 ? <Users size={18} className="text-red-600" /> : <Brain size={18} className="text-red-600" />}
                     {currentOpponentName}
                   </div>
                   <h3 className="text-3xl font-extrabold text-gray-900 mt-1">{scores.player2} pairs</h3>
-                  {currentPlayer === 2 && <span className="text-xs font-bold text-green-600 block mt-1">● TURN</span>}
+                  {currentPlayer === 2 && <span className="text-xs font-bold text-red-600 block mt-1">● TURN</span>}
                 </div>
               </div>
             </div>
 
-            {/* --- Debug Toggle for Bot Memory (AI modes only) --- */}
-            {opponentType !== OpponentTypes.PLAYER2 && opponentType !== OpponentTypes.RANDOMIZER && (
+            {/* --- Debug Indicator --- */}
+            {opponentType !== OpponentTypes.PLAYER2 && opponentType !== OpponentTypes.RANDOMIZER && showDebugMemory && (
               <div className="text-center mb-4">
-                <button
-                  onClick={() => setShowDebugMemory(prev => !prev)}
-                  className={`text-xs font-medium py-1 px-3 rounded-full transition flex items-center mx-auto gap-1 ${showDebugMemory ? 'bg-red-100 text-red-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
-                >
-                  <Eye size={14} />
-                  {showDebugMemory ? 'Hide Bot Memory (Cheat Mode ON)' : 'Show Bot Memory (Debug)'}
-                </button>
+                 <span className="text-xs font-medium py-1 px-3 rounded-full bg-yellow-100 text-yellow-800 flex items-center mx-auto gap-1 w-fit">
+                    <Eye size={14} /> Bot Memory Visible (Debug Mode)
+                </span>
+                {debuffFactor > 0 && (
+                     <span className="ml-4 text-xs font-semibold text-red-500">
+                        DEBUFF ACTIVE: +{debuffFactor} Randomness
+                    </span>
+                )}
               </div>
             )}
 
-            {/* --- Game Grid --- */}
-            <div
-              className={`grid gap-3 transition-opacity duration-500 ${isProcessing && currentPlayer === 2 ? 'opacity-70 pointer-events-none' : 'opacity-100'}`}
-              style={{
-                gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))`,
-              }}
-            >
-              {cards.map((card, index) => (
-                <Card key={card.id} card={card} index={index} />
-              ))}
+            {/* --- Game Grid (Responsive container to fit on screen) --- */}
+            <div className="flex-grow flex items-center justify-center min-h-0 overflow-hidden p-1">
+                <div
+                    // Set max width dynamically to control card size
+                    style={{
+                        gridTemplateColumns: `repeat(${gridSize}, 1fr)`,
+                        maxWidth: `${totalGridWidth}px`, 
+                        maxHeight: '90vh',
+                    }}
+                    className={`grid gap-3 w-full transition-opacity duration-500 ${isProcessing && currentPlayer === 2 ? 'opacity-70 pointer-events-none' : 'opacity-100'}`}
+                >
+                    {cards.map((card, index) => (
+                        <Card key={card.id} card={card} index={index} />
+                    ))}
+                </div>
             </div>
+
 
             {/* --- Game Over Modal --- */}
             {isGameOver && (
