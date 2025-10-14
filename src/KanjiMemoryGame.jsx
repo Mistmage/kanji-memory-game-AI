@@ -40,11 +40,11 @@ const OpponentTypes = {
 // --- Bot Configuration Defaults (Array of 13 numbers) ---
 const BOT_CONFIGS = {
   [OpponentTypes.RANDOMIZER]: [0, 0, 0, 100, 0, 0, 100, 0, 0, 100, 0, 0, 0],
-  [OpponentTypes.BOT_NOVICE]: [0, 5, 90, 5, 0, 0, 100, 20, 0, 80, 0, 0, 0],
-  [OpponentTypes.BOT_CASUAL]: [0, 20, 70, 10, 25, 75, 0, 30, 0, 70, 0, 0, 1],
-  [OpponentTypes.BOT_SHREWD]: [50, 20, 80, 0, 25, 75, 0, 40, 0, 0, 30, 30, 3],
-  [OpponentTypes.BOT_MASTER]: [75, 30, 60, 10, 25, 75, 0, 70, 0, 0, 5, 25, 5],
-  [OpponentTypes.BOT_ELITE]: [100, 5, 95, 0, 25, 75, 0, 80, 0, 20, 0, 0, 8],
+  [OpponentTypes.BOT_NOVICE]: [0, 40, 40, 20, 10, 30, 60, 20, 10, 60, 4, 6, 0],
+  [OpponentTypes.BOT_CASUAL]: [10, 20, 70, 10, 25, 75, 0, 35, 15, 30, 15, 5, 0],
+  [OpponentTypes.BOT_SHREWD]: [50, 20, 80, 0, 30, 60, 10, 40, 0, 0, 40, 20, 0],
+  [OpponentTypes.BOT_MASTER]: [70, 15, 75, 10, 5, 75, 70, 70, 20, 0, 0, 10, 0],
+  [OpponentTypes.BOT_ELITE]: [90, 5, 95, 0, 4, 95, 1, 80, 15, 1, 2, 2, 0],
   [OpponentTypes.CUSTOM]: [50, 33, 34, 33, 33, 34, 33, 50, 10, 10, 10, 20, 0]
 };
 
