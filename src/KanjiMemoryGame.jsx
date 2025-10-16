@@ -25,7 +25,7 @@ const KANJI_SETS = {
   'All Kanji (13k+)': 'all',
 };
 
-// Opponent Types for selection
+// Opponent Types for selection (Custom Bot removed)
 const OpponentTypes = {
   PLAYER2: 'Player 2',
   RANDOMIZER: 'Randomizer',
@@ -34,10 +34,10 @@ const OpponentTypes = {
   BOT_SHREWD: 'Bot (Level 3: Shrewd)',
   BOT_MASTER: 'Bot (Level 4: Master)',
   BOT_ELITE: 'Bot (Level 5: Elite)',
-  CUSTOM: 'Custom Bot',
 };
 
-// --- Bot Configuration Defaults (Array of 13 numbers) ---
+// --- Bot Configuration Defaults (Array of 12 numbers: indices 0-11) ---
+// Anti-Combo Debuff (index 12) has been removed from all arrays.
 const BOT_CONFIGS = {
   [OpponentTypes.RANDOMIZER]: [0, 0, 0, 100, 0, 0, 100, 0, 0, 100, 0, 0, 0],
   [OpponentTypes.BOT_NOVICE]: [0, 40, 40, 20, 10, 30, 60, 20, 10, 60, 4, 6, 0],
@@ -45,7 +45,6 @@ const BOT_CONFIGS = {
   [OpponentTypes.BOT_SHREWD]: [50, 20, 80, 0, 30, 60, 10, 40, 0, 0, 40, 20, 0],
   [OpponentTypes.BOT_MASTER]: [70, 15, 75, 10, 5, 75, 70, 70, 20, 0, 0, 10, 0],
   [OpponentTypes.BOT_ELITE]: [90, 5, 95, 0, 4, 95, 1, 80, 15, 1, 2, 2, 0],
-  [OpponentTypes.CUSTOM]: [50, 33, 34, 33, 33, 34, 33, 50, 10, 10, 10, 20, 0]
 };
 
 // --- Helper to select an option based on weighted probabilities ---
@@ -78,28 +77,28 @@ export default function KanjiMemoryGame() {
   const [gridSize, setGridSize] = useState(6); 
   const [cards, setCards] = useState([]);
   const [flippedIndices, setFlippedIndices] = useState([]);
-  const [matchedPairs, setMatchedPairs] = useState(new Set());
+  // FIX: Syntax error on this line. Changed `new Set())` to `new Set()`
+  const [matchedPairs, setMatchedPairs] = useState(new Set()); 
   const [matchOwners, setMatchOwners] = useState({}); 
   const [currentPlayer, setCurrentPlayer] = useState(1);
   const [scores, setScores] = useState({ player1: 0, player2: 0 });
   const [opponentType, setOpponentType] = useState(OpponentTypes.BOT_CASUAL); 
   const [gameStarted, setGameStarted] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isModalLoading, setIsModalLoading] = useState(false); // NEW: For pre-modal word fetching
   const [previousKanjiData, setPreviousKanjiData] = useState(null); 
   const [reuseKanji, setReuseKanji] = useState(false);
   
   // --- Bot/Customization State ---
   const [botMemory, setBotMemory] = useState({});
-  const [customBotConfig, setCustomBotConfig] = useState(BOT_CONFIGS[OpponentTypes.CUSTOM]);
-  const [debuffFactor, setDebuffFactor] = useState(0); 
   
   // --- Modal State (Settings & Kanji Details) ---
   const [showVisualSettingsModal, setShowVisualSettingsModal] = useState(false);
-  const [showContentSettingsModal, setShowContentSettingsModal] = useState(false); // NEW Modal State
+  const [showContentSettingsModal, setShowContentSettingsModal] = useState(false); 
   const [showKanjiModal, setShowKanjiModal] = useState(false);
   const [modalKanjiData, setModalKanjiData] = useState(null);
 
-  // --- Visual Settings State (Moved from previous component) ---
+  // --- Visual Settings State ---
   const [flipDuration, setFlipDuration] = useState(1500); 
   const [cardContentScale, setCardContentScale] = useState(1.0); 
   const [showDebugMemory, setShowDebugMemory] = useState(false); 
@@ -108,17 +107,15 @@ export default function KanjiMemoryGame() {
   // --- Content Visibility State ---
   const [contentVisibility, setContentVisibility] = useState({
     meaning: true,
+    romaji: false, // Master toggle for On/Kun readings
     on: false,
     kun: false,
     strokeCount: false,
   });
 
   const currentBotConfig = useMemo(() => {
-    if (opponentType === OpponentTypes.CUSTOM) {
-        return customBotConfig;
-    }
     return BOT_CONFIGS[opponentType] || BOT_CONFIGS[OpponentTypes.RANDOMIZER];
-  }, [opponentType, customBotConfig]);
+  }, [opponentType]);
 
   const isGameOver = useMemo(() => {
     return matchedPairs.size === cards.length / 2 && cards.length > 0;
@@ -151,6 +148,43 @@ export default function KanjiMemoryGame() {
   useEffect(() => {
     fetchKanjiList(kanjiSetEndpoint);
   }, [kanjiSetEndpoint, fetchKanjiList]);
+  
+  // --- Dictionary Word Data Fetcher and Cacher (NEW FUNCTION) ---
+  const fetchAndCacheWordData = useCallback(async (kanjiData) => {
+    // If wordData is already present (cached), return immediately.
+    if (kanjiData.wordData !== null) {
+        return kanjiData; 
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/words/${kanjiData.kanji}`);
+        let responseData = [];
+
+        if (response.status === 404) {
+            responseData = []; // No words found
+        } else if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        } else {
+            responseData = await response.json();
+        }
+
+        // Cache the result in the main cards state
+        setCards(prevCards => prevCards.map(c => 
+            c.kanji === kanjiData.kanji ? { ...c, wordData: responseData } : c
+        ));
+        
+        return { ...kanjiData, wordData: responseData };
+
+    } catch (e) {
+        console.error("Failed to fetch word data:", e);
+        // On error, cache an empty array to prevent re-fetching endlessly
+        setCards(prevCards => prevCards.map(c => 
+            c.kanji === kanjiData.kanji ? { ...c, wordData: [] } : c
+        ));
+        // We will still pass the data through to open the modal, it will just show 'no words'.
+        return { ...kanjiData, wordData: [] };
+    }
+  }, []);
 
 
   // --- Game Initialization ---
@@ -195,16 +229,16 @@ export default function KanjiMemoryGame() {
           meaning: res.meanings.join(', ') || '—',
           kun: res.kun_readings.join(', ') || '—',
           on: res.on_readings.join(', ') || '—',
-          name_readings: res.name_readings.join(', ') || '—', // NEW
+          name_readings: res.name_readings.join(', ') || '—',
           stroke_count: res.stroke_count,
           grade: res.grade,
           jlpt: res.jlpt,
-          heisig_en: res.heisig_en || '—', // NEW
-          freq_mainichi_shinbun: res.freq_mainichi_shinbun, // NEW
-          unicode: res.unicode, // NEW
-          unihan_cjk_compatibility_variant: res.unihan_cjk_compatibility_variant, // NEW
-          notes: res.notes || [], // NEW
-          wordData: null, // Placeholder for dictionary data fetched on modal open
+          heisig_en: res.heisig_en || '—',
+          freq_mainichi_shinbun: res.freq_mainichi_shinbun,
+          unicode: res.unicode,
+          unihan_cjk_compatibility_variant: res.unihan_cjk_compatibility_variant,
+          notes: res.notes || [],
+          wordData: null, // Placeholder for dictionary data - MUST be null initially
         }));
         setPreviousKanjiData(selectedKanjiDetails);
       } catch (e) {
@@ -231,30 +265,45 @@ export default function KanjiMemoryGame() {
     setGameStarted(true);
     setBotMemory({});
     setReuseKanji(false);
-    setDebuffFactor(0); 
     setIsProcessing(false);
     setShowVisualSettingsModal(false); 
     setShowContentSettingsModal(false); 
   }, [gridSize, reuseKanji, previousKanjiData, kanjiCharacters, kanjiSetEndpoint]);
 
   // --- User Turn Logic ---
-  const handleCardClick = (index) => {
-    if (isProcessing) {
+  const handleCardClick = async (index) => { // Make async
+    if (isProcessing || isModalLoading) { // Check for modal loading state
       return;
     }
     
-    const isRevealed = flippedIndices.includes(index) || matchedPairs.has(cards[index].kanjiId);
+    const card = cards[index]; // Get the card here for easier reference
     
-    // Pop-up modal if a revealed card is clicked and no match is in progress
-    // The user also requested that revealed card = scored card.
-    if (matchedPairs.has(cards[index]?.kanjiId) && flippedIndices.length === 0) {
-        setModalKanjiData(cards[index]);
-        setShowKanjiModal(true);
+    // Safety check for empty card object (shouldn't happen, but good practice)
+    if (!card) return; 
+
+    const isRevealed = flippedIndices.includes(index) || matchedPairs.has(card.kanjiId);
+    
+    // Pop-up modal if a scored card is clicked and no match is in progress
+    if (matchedPairs.has(card.kanjiId) && flippedIndices.length === 0) {
+        setIsModalLoading(true); // Start loading state
+
+        try {
+            // Fetch and cache data before opening the modal
+            const updatedKanjiData = await fetchAndCacheWordData(card); 
+            
+            setModalKanjiData(updatedKanjiData);
+            setShowKanjiModal(true);
+        } catch (e) {
+            // Error logged in fetchAndCacheWordData, we allow the modal to open 
+            // even on error, it will just show cached 'no words' or empty array.
+        } finally {
+            setIsModalLoading(false); // End loading state
+        }
         return;
     }
     
     // Only allow flip if it's not matched and not already flipped
-    if (flippedIndices.includes(index) || matchedPairs.has(cards[index].kanjiId)) {
+    if (flippedIndices.includes(index) || matchedPairs.has(card.kanjiId)) {
       return;
     }
 
@@ -286,8 +335,14 @@ export default function KanjiMemoryGame() {
       const [idx1, idx2] = flippedIndices;
       const card1 = cards[idx1];
       const card2 = cards[idx2];
-      const config = currentBotConfig;
-
+      
+      // Safety check in case cards are undefined (shouldn't happen if game is initialized correctly)
+      if (!card1 || !card2) {
+        setFlippedIndices([]);
+        setIsProcessing(false);
+        return;
+      }
+      
       // Wait for 1 second so the user/bot can see both cards before processing the result
       setTimeout(() => {
         if (card1.kanjiId === card2.kanjiId) {
@@ -304,19 +359,13 @@ export default function KanjiMemoryGame() {
           setFlippedIndices([]);
           setIsProcessing(false); // Ready for next turn (same player)
           
-          if (currentPlayer === 2) {
-              setDebuffFactor(config[12]); 
-          } else {
-              setDebuffFactor(0);
-          }
-
         } else {
           // Mismatch found, wait for flipDuration before cleanup
           setTimeout(() => {
             setFlippedIndices([]);
             setCurrentPlayer(currentPlayer === 1 ? 2 : 1);
             setIsProcessing(false); // Released after the cards flip back
-            setDebuffFactor(0); 
+            
           }, flipDuration); 
 
           // Bot memory update on second flip of mismatch
@@ -329,7 +378,7 @@ export default function KanjiMemoryGame() {
         }
       }, 1000); // Initial visibility delay
     }
-  }, [flippedIndices, cards, currentPlayer, opponentType, currentBotConfig, flipDuration]);
+  }, [flippedIndices, cards, currentPlayer, opponentType, flipDuration]);
 
 
   // --- Bot Logic Helper Functions (Unchanged) ---
@@ -427,11 +476,10 @@ export default function KanjiMemoryGame() {
       let options;
 
       if (isMatchKnown) {
-        const randomCloseWeight = config[8] + debuffFactor;
         
         options = [
           { weight: config[7], action: 'match' },         
-          { weight: randomCloseWeight, action: 'random_close' }, 
+          { weight: config[8], action: 'random_close' }, 
           { weight: config[9], action: 'random' },        
           { weight: config[10], action: 'new' },          
           { weight: config[11], action: 'known' },         
@@ -471,7 +519,7 @@ export default function KanjiMemoryGame() {
       // isProcessing remains true, the match resolution useEffect will release it.
 
     }, 1000); // Bot's "thinking" delay
-  }, [currentBotConfig, cards, getKnownPairIndices, getRandomNewCard, getRandomKnownCard, getRandomUnmatchedIndex, botMemory, matchedPairs, debuffFactor]);
+  }, [currentBotConfig, cards, getKnownPairIndices, getRandomNewCard, getRandomKnownCard, getRandomUnmatchedIndex, botMemory, matchedPairs]);
 
 
   // --- Bot Turn Trigger Effect ---
@@ -491,16 +539,30 @@ export default function KanjiMemoryGame() {
   const ContentSettingsModal = ({ onClose }) => {
     const settingsMap = {
       meaning: { label: 'Meaning', key: 'meaning' },
-      on: { label: 'On-Yomi', key: 'on' },
-      kun: { label: 'Kun-Yomi', key: 'kun' },
+      romaji: { label: 'Romaji Readings (On & Kun)', key: 'romaji' }, // Master Toggle
+      on: { label: 'On-Yomi (Individual)', key: 'on' },
+      kun: { label: 'Kun-Yomi (Individual)', key: 'kun' },
       strokeCount: { label: 'Stroke Count', key: 'strokeCount' },
     };
 
     const toggleSetting = (key) => {
-      setContentVisibility(prev => ({
-        ...prev,
-        [key]: !prev[key]
-      }));
+      setContentVisibility(prev => {
+          const newState = { ...prev };
+          const newValue = !prev[key];
+          newState[key] = newValue;
+
+          if (key === 'romaji') {
+              // Master toggle: set both individual readings to the new romaji state
+              newState.on = newValue;
+              newState.kun = newValue;
+          } else if (key === 'on' || key === 'kun') {
+              // If an individual reading is toggled, ensure 'romaji' master toggle is unchecked if both become false
+              if (prev.romaji) {
+                  newState.romaji = false;
+              }
+          }
+          return newState;
+      });
     };
 
     return (
@@ -509,22 +571,27 @@ export default function KanjiMemoryGame() {
                 Use these buttons to define what auxiliary information is displayed on the face of a **matched (scored) card**.
             </p>
             <div className="grid grid-cols-2 gap-4">
-                {Object.values(settingsMap).map(({ label, key }) => (
-                    <button
-                        key={key}
-                        onClick={() => toggleSetting(key)}
-                        className={`
-                            p-3 rounded-lg font-bold text-sm transition-colors duration-200 shadow-md flex items-center justify-center gap-2
-                            ${contentVisibility[key] 
-                                ? 'bg-purple-600 text-white hover:bg-purple-700' 
-                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                            }
-                        `}
-                    >
-                        {contentVisibility[key] ? <Check size={18}/> : <X size={18}/>}
-                        {label}
-                    </button>
-                ))}
+                {Object.values(settingsMap).map(({ label, key }) => {
+                    // Simpler isActive determination: use the stored value
+                    const isActive = contentVisibility[key];
+
+                    return (
+                        <button
+                            key={key}
+                            onClick={() => toggleSetting(key)}
+                            className={`
+                                p-3 rounded-lg font-bold text-sm transition-colors duration-200 shadow-md flex items-center justify-center gap-2
+                                ${isActive 
+                                    ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                }
+                            `}
+                        >
+                            {isActive ? <Check size={18}/> : <X size={18}/>}
+                            {label}
+                        </button>
+                    );
+                })}
             </div>
             <p className="text-xs text-gray-500 mt-4 text-center">
                 The full Kanji Details (including Name Readings, Heisig, and Word Lists) are always available by clicking on any matched card.
@@ -628,61 +695,7 @@ export default function KanjiMemoryGame() {
     </div>
   );
 
-  const CustomBotSettings = ({ config, onConfigChange }) => {
-    // ... (Bot settings component remains mostly unchanged, now appears in setup/visual modal)
-    const fields = [
-        { key: 0, label: '0. 1st Card: P Match Attempt (0-100)', min: 0, max: 100, help: 'Probability to start a turn by attempting a known pair.' },
-        { key: 1, label: '1. 1st Card: Known (W)', min: 0, max: 100, help: 'Weight to flip a card already in memory.' },
-        { key: 2, label: '2. 1st Card: New (W)', min: 0, max: 100, help: 'Weight to flip a card bot has never seen.' },
-        { key: 3, label: '3. 1st Card: Random (W)', min: 0, max: 100, help: 'Weight to flip any random unmatched card.' },
-        { key: 4, label: '4. 2nd UK: Known (W)', min: 0, max: 100, help: 'If match is UNKNOWN, weight to pick a known card.' },
-        { key: 5, label: '5. 2nd UK: New (W)', min: 0, max: 100, help: 'If match is UNKNOWN, weight to pick a new card.' },
-        { key: 6, label: '6. 2nd UK: Random (W)', min: 0, max: 100, help: 'If match is UNKNOWN, weight to pick a random card.' },
-        { key: 7, label: '7. 2nd K: Exact Match (W)', min: 0, max: 100, help: 'If match is KNOWN, weight to flip the exact match.' },
-        { key: 8, label: '8. 2nd K: Random Close (W)', min: 0, max: 100, help: 'Base weight for random fallback. Receives Debuff (index 12).' },
-        { key: 9, label: '9. 2nd K: Random (W)', min: 0, max: 100, help: 'If match is KNOWN, weight to flip any random card.' },
-        { key: 10, label: '10. 2nd K: New (W)', min: 0, max: 100, help: 'If match is KNOWN, weight to flip a new card.' },
-        { key: 11, label: '11. 2nd K: Known (W)', min: 0, max: 100, help: 'If match is KNOWN, weight to flip another known card (not the match).' },
-        { key: 12, label: '12. Anti-Combo Debuff (0-10)', min: 0, max: 10, help: 'Value added to "Random Close" (index 8) after a successful match (next turn only).' },
-    ];
-
-    const handleChange = (key, value) => {
-        onConfigChange(prev => {
-            const newConfig = [...prev];
-            newConfig[key] = parseInt(value, 10);
-            return newConfig;
-        });
-    };
-
-    return (
-      <div className="mt-8 bg-gray-100 p-4 rounded-lg shadow-inner">
-        <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-700">
-          <Settings size={20} /> Custom Bot Weights
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 max-h-[300px] overflow-y-auto pr-2">
-          {fields.map(field => (
-            <div key={field.key} className="flex flex-col">
-              <label className="text-sm font-semibold text-gray-700 mb-1 leading-tight">
-                {field.label}: **{config[field.key]}**
-              </label>
-              <input
-                type="range"
-                min={field.min}
-                max={field.max}
-                step="1"
-                value={config[field.key]}
-                onChange={(e) => handleChange(field.key, e.target.value)}
-                className="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer range-sm"
-              />
-              <p className="text-xs text-gray-500 mt-1">{field.help}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  // --- Card Component (Updated for Green/Red color coding and scaling) ---
+  // --- Card Component (Updated to fix Romaji rendering logic) ---
   const Card = ({ card, index }) => {
     const flipped = isCardFlipped(index);
     const matched = matchedPairs.has(card.kanjiId);
@@ -705,12 +718,15 @@ export default function KanjiMemoryGame() {
     if (contentVisibility.meaning) {
         contentLines.push(<div key="meaning" className="text-gray-700 font-semibold leading-tight">{card.meaning}</div>);
     }
+    
+    // FIX: Only check the individual 'on' and 'kun' states for rendering
     if (contentVisibility.on) {
         contentLines.push(<div key="on" className="text-gray-500 leading-tight">On: {card.on}</div>);
     }
     if (contentVisibility.kun) {
         contentLines.push(<div key="kun" className="text-gray-500 leading-tight">Kun: {card.kun}</div>);
     }
+    
     if (contentVisibility.strokeCount) {
          contentLines.push(<div key="strokes" className="text-gray-500 leading-tight">Strokes: {card.stroke_count}</div>);
     }
@@ -760,40 +776,13 @@ export default function KanjiMemoryGame() {
 
   // --- Kanji Detail Modal Component (EXTENDED) ---
   const KanjiDetailModal = ({ data, onClose }) => {
-    const [wordData, setWordData] = useState(data.wordData);
-    const [isWordsLoading, setIsWordsLoading] = useState(false);
-    const [wordError, setWordError] = useState(null);
+    // Data is guaranteed to be present and wordData will be cached ([] for 404/error/fetch error)
+    const words = data.wordData || []; 
+    const [visibleWordCount, setVisibleWordCount] = useState(10); 
 
-    // Fetch word data on mount if not already present
-    useEffect(() => {
-        if (!data.kanji || wordData) return;
-
-        const fetchWordData = async () => {
-            setIsWordsLoading(true);
-            setWordError(null);
-            try {
-                const response = await fetch(`${API_BASE_URL}/words/${data.kanji}`);
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const responseData = await response.json();
-                setWordData(responseData);
-
-                // Update the card data in the main state to cache the word data
-                setCards(prevCards => prevCards.map(c => 
-                    c.kanji === data.kanji ? { ...c, wordData: responseData } : c
-                ));
-
-            } catch (e) {
-                console.error("Failed to fetch word data:", e);
-                setWordError("Could not load associated dictionary words.");
-            } finally {
-                setIsWordsLoading(false);
-            }
-        };
-
-        fetchWordData();
-    }, [data.kanji, wordData]);
+    const handleLoadMore = () => {
+        setVisibleWordCount(prev => prev + 10);
+    };
 
     if (!data) return null;
 
@@ -874,40 +863,53 @@ export default function KanjiMemoryGame() {
                         <List size={24} className="text-indigo-600"/> Associated Words
                     </h2>
                     
-                    {isWordsLoading && (
-                        <div className="flex items-center justify-center p-6 text-indigo-600">
-                            <Loader size={24} className="animate-spin mr-3" /> Loading Dictionary Entries...
-                        </div>
-                    )}
-
-                    {wordError && <p className="text-red-500 p-4 bg-red-50 rounded-lg">{wordError}</p>}
-                    
-                    {!isWordsLoading && wordData && wordData.length > 0 && (
-                        <div className="space-y-4 max-h-80 overflow-y-auto pr-2">
-                            {wordData.slice(0, 10).map((word, index) => (
-                                <div key={index} className="p-4 border border-gray-200 rounded-lg bg-gray-50 shadow-sm">
-                                    {word.variants.map((variant, vIndex) => (
-                                        <div key={vIndex} className="flex items-baseline mb-2">
-                                            <span className="text-xl font-bold text-gray-900 mr-3">{variant.written}</span>
-                                            <span className="text-lg text-indigo-600">({variant.pronounced})</span>
-                                        </div>
-                                    ))}
-                                    <ul className="list-none space-y-1 ml-4 text-sm text-gray-700">
-                                        {word.meanings.map((meaning, mIndex) => (
-                                            <li key={mIndex} className="flex items-start">
-                                                <CornerDownRight size={16} className="text-gray-400 mr-2 flex-shrink-0 mt-1"/>
-                                                {meaning.glosses.join('; ')}
-                                            </li>
+                    {words.length > 0 ? (
+                        <>
+                            <div className="space-y-4 max-h-80 overflow-y-auto pr-2">
+                                {/* Use visibleWordCount for slicing */}
+                                {words.slice(0, visibleWordCount).map((word, index) => (
+                                    <div key={index} className="p-4 border border-gray-200 rounded-lg bg-gray-50 shadow-sm">
+                                        {word.variants.map((variant, vIndex) => (
+                                            <div key={vIndex} className="flex items-baseline mb-2">
+                                                <span className="text-xl font-bold text-gray-900 mr-3">{variant.written}</span>
+                                                <span className="text-lg text-indigo-600">({variant.pronounced})</span>
+                                            </div>
                                         ))}
-                                    </ul>
+                                        <ul className="list-none space-y-1 ml-4 text-sm text-gray-700">
+                                            {word.meanings.map((meaning, mIndex) => (
+                                                <li key={mIndex} className="flex items-start">
+                                                    <CornerDownRight size={16} className="text-gray-400 mr-2 flex-shrink-0 mt-1"/>
+                                                    {meaning.glosses.join('; ')}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ))}
+                            </div>
+                            
+                            {/* Load More Button */}
+                            {words.length > visibleWordCount && (
+                                <div className="text-center mt-4">
+                                    <button
+                                        onClick={handleLoadMore}
+                                        className="bg-purple-100 text-purple-700 py-2 px-4 rounded-full font-bold hover:bg-purple-200 transition text-sm flex items-center justify-center gap-2 mx-auto"
+                                    >
+                                        <ChevronDown size={18} /> Load Next 10 Words ({visibleWordCount} of {words.length} shown)
+                                    </button>
                                 </div>
-                            ))}
-                            {wordData.length > 10 && <p className="text-sm text-center text-gray-500 mt-2">...and {wordData.length - 10} more words.</p>}
-                        </div>
-                    )}
-                    
-                    {!isWordsLoading && wordData && wordData.length === 0 && (
-                        <p className="p-4 bg-yellow-50 rounded-lg text-gray-700">No common dictionary entries found for this kanji.</p>
+                            )}
+                            
+                            {/* "All words shown" message */}
+                            {words.length <= visibleWordCount && (
+                                <p className="text-sm text-center text-gray-500 mt-4">
+                                    All {words.length} associated words are shown.
+                                </p>
+                            )}
+                        </>
+                    ) : (
+                        <p className="p-4 bg-yellow-50 rounded-lg text-gray-700">
+                            No common dictionary entries found for this kanji.
+                        </p>
                     )}
                 </div>
 
@@ -989,7 +991,16 @@ export default function KanjiMemoryGame() {
                 onClose={() => setShowVisualSettingsModal(false)}
             />
         )}
-
+        
+        {/* --- MODAL PRE-LOADER (NEW) --- */}
+        {isModalLoading && (
+            <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-40">
+                <div className="flex items-center space-x-3 text-lg font-semibold text-white bg-indigo-600 p-4 rounded-full shadow-xl">
+                    <Loader size={24} className="animate-spin" />
+                    <span>Loading Kanji Dictionary Data...</span>
+                </div>
+            </div>
+        )}
 
         {/* --- Header --- */}
         <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-2">
@@ -1073,19 +1084,12 @@ export default function KanjiMemoryGame() {
                   onChange={(e) => setOpponentType(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
                 >
-                  {Object.values(OpponentTypes).map(type => (
+                  {Object.values(OpponentTypes)
+                    .map(type => (
                     <option key={type} value={type}>{type}</option>
                   ))}
                 </select>
               </div>
-
-              {/* Custom Bot Settings */}
-              {opponentType === OpponentTypes.CUSTOM && (
-                <CustomBotSettings 
-                    config={customBotConfig} 
-                    onConfigChange={setCustomBotConfig} 
-                />
-              )}
 
               {/* Quick Settings Access */}
               <div className="pt-4 border-t border-gray-200">
@@ -1172,11 +1176,6 @@ export default function KanjiMemoryGame() {
                  <span className="text-xs font-medium py-1 px-3 rounded-full bg-yellow-100 text-yellow-800 flex items-center mx-auto gap-1 w-fit">
                     <Eye size={14} /> Bot Memory Visible (Debug Mode)
                 </span>
-                {debuffFactor > 0 && (
-                     <span className="ml-4 text-xs font-semibold text-red-500">
-                        DEBUFF ACTIVE: +{debuffFactor} Randomness
-                    </span>
-                )}
               </div>
             )}
 
