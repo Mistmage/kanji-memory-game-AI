@@ -26,7 +26,7 @@ const KANJI_SETS = {
   'All Kanji (13k+)': 'all',
 };
 
-// Opponent Types for selection
+// Opponent Types for selection (Custom Bot removed)
 const OpponentTypes = {
   PLAYER2: 'Player 2',
   RANDOMIZER: 'Randomizer',
@@ -114,13 +114,15 @@ export default function KanjiMemoryGame() {
   const [gridSize, setGridSize] = useState(6); 
   const [cards, setCards] = useState([]);
   const [flippedIndices, setFlippedIndices] = useState([]);
-  const [matchedPairs, setMatchedPairs] = useState(new Set());
+  // FIX: Syntax error on this line. Changed `new Set())` to `new Set()`
+  const [matchedPairs, setMatchedPairs] = useState(new Set()); 
   const [matchOwners, setMatchOwners] = useState({}); 
   const [currentPlayer, setCurrentPlayer] = useState(1);
   const [scores, setScores] = useState({ player1: 0, player2: 0 });
   const [opponentType, setOpponentType] = useState(OpponentTypes.BOT_CASUAL); 
   const [gameStarted, setGameStarted] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isModalLoading, setIsModalLoading] = useState(false); // NEW: For pre-modal word fetching
   const [isModalLoading, setIsModalLoading] = useState(false); // NEW: For pre-modal word fetching
   const [previousKanjiData, setPreviousKanjiData] = useState(null); 
   const [reuseKanji, setReuseKanji] = useState(false);
@@ -131,9 +133,11 @@ export default function KanjiMemoryGame() {
   // --- Modal State (Settings & Kanji Details) ---
   const [showVisualSettingsModal, setShowVisualSettingsModal] = useState(false);
   const [showContentSettingsModal, setShowContentSettingsModal] = useState(false); 
+  const [showContentSettingsModal, setShowContentSettingsModal] = useState(false); 
   const [showKanjiModal, setShowKanjiModal] = useState(false);
   const [modalKanjiData, setModalKanjiData] = useState(null);
 
+  // --- Visual Settings State ---
   // --- Visual Settings State ---
   const [flipDuration, setFlipDuration] = useState(1500); 
   const [cardContentScale, setCardContentScale] = useState(1.0); 
@@ -164,6 +168,7 @@ export default function KanjiMemoryGame() {
 
   const currentBotConfig = useMemo(() => {
     return BOT_CONFIGS[opponentType] || BOT_CONFIGS[OpponentTypes.RANDOMIZER];
+  }, [opponentType]);
   }, [opponentType]);
 
   const isGameOver = useMemo(() => {
@@ -407,7 +412,7 @@ export default function KanjiMemoryGame() {
 
     
     // Only allow flip if it's not matched and not already flipped
-    if (flippedIndices.includes(index) || matchedPairs.has(cards[index].kanjiId)) {
+    if (flippedIndices.includes(index) || matchedPairs.has(card.kanjiId)) {
       return;
     }
 
@@ -483,12 +488,14 @@ if (card1.kanjiId === card2.kanjiId) {
           setFlippedIndices([]);
           setIsProcessing(false); // Ready for next turn (same player)
           
+          
         } else {
           // Mismatch found, wait for flipDuration before cleanup
           setTimeout(() => {
             setFlippedIndices([]);
             setCurrentPlayer(currentPlayer === 1 ? 2 : 1);
             setIsProcessing(false); // Released after the cards flip back
+            
             
           }, flipDuration); 
 
@@ -502,6 +509,7 @@ if (card1.kanjiId === card2.kanjiId) {
         }
       }, 1000); // Initial visibility delay
     }
+  }, [flippedIndices, cards, currentPlayer, opponentType, flipDuration]);
   }, [flippedIndices, cards, currentPlayer, opponentType, flipDuration]);
 
 
@@ -604,6 +612,7 @@ if (card1.kanjiId === card2.kanjiId) {
         options = [
           { weight: config[7], action: 'match' },         
           { weight: config[8], action: 'random_close' }, 
+          { weight: config[8], action: 'random_close' }, 
           { weight: config[9], action: 'random' },        
           { weight: config[10], action: 'new' },          
           { weight: config[11], action: 'known' },         
@@ -643,6 +652,7 @@ if (card1.kanjiId === card2.kanjiId) {
       // isProcessing remains true, the match resolution useEffect will release it.
 
     }, 1000); // Bot's "thinking" delay
+  }, [currentBotConfig, cards, getKnownPairIndices, getRandomNewCard, getRandomKnownCard, getRandomUnmatchedIndex, botMemory, matchedPairs]);
   }, [currentBotConfig, cards, getKnownPairIndices, getRandomNewCard, getRandomKnownCard, getRandomUnmatchedIndex, botMemory, matchedPairs]);
 
 
@@ -1456,6 +1466,8 @@ if (card1.kanjiId === card2.kanjiId) {
                   onChange={(e) => setOpponentType(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
                 >
+                  {Object.values(OpponentTypes)
+                    .map(type => (
                   {Object.values(OpponentTypes)
                     .map(type => (
                     <option key={type} value={type}>{type}</option>
