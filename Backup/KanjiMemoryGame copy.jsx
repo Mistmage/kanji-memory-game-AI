@@ -459,23 +459,13 @@ export default function KanjiMemoryGame() {
 
       // Wait for 1 second so the user/bot can see both cards before processing the result
       setTimeout(() => {
-if (card1.kanjiId === card2.kanjiId) {
+        if (card1.kanjiId === card2.kanjiId) {
           // Match found
           setMatchedPairs(prev => new Set([...prev, card1.kanjiId]));
           setMatchOwners(prev => ({
               ...prev,
               [card1.kanjiId]: currentPlayer
           }));
-          
-          // Save card order assignments for FLIP_ORDER mode on successful match
-          if (cardOrderMode === 'FLIP_ORDER') {
-            setCardOrderAssignments(prev => ({
-              ...prev,
-              [card1.id]: 1, // First flipped card (by card.id)
-              [card2.id]: 2  // Second flipped card (by card.id)
-            }));
-          }
-          
           setScores(prev => ({
             ...prev,
             [`player${currentPlayer}`]: prev[`player${currentPlayer}`] + 1

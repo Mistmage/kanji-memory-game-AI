@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Brain, Users, Shuffle, RotateCcw, Eye, Loader, CloudOff, Settings, X, ChevronDown, ChevronUp, BookOpen, Volume2, List, Grid, Info, Check, CornerDownRight } from 'lucide-react';
-import * as wanakana from 'wanakana';
 
 // --- API Configuration ---
 const API_BASE_URL = 'https://kanjiapi.dev/v1';
@@ -90,15 +89,11 @@ const CARD_ORDER_MODES = {
 
 const FEATURE_LABELS = {
     kanji: 'Kanji Character (Main)',
-    frequency: 'Frequency Rank',
     meaning: 'English Meaning',
-    heisig: 'Heisig Keyword',
     on: 'On-Yomi Reading',
     kun: 'Kun-Yomi Reading',
-    kunRomaji: 'Kun-Yomi Reading (Romaji)',
-    onRomaji: 'On-Yomi Reading (Romaji)',
+    readings: 'Combined Readings (Kana/Romaji)',
     strokeCount: 'Stroke Count',
-    unicode: 'Unicode',
 };
 
 
@@ -141,22 +136,14 @@ export default function KanjiMemoryGame() {
   const [cardBaseWidth, setCardBaseWidth] = useState(100); 
 
   // --- Content Visibility State (Updated to use 4-state for both matched and flipped) ---
-
   const [contentVisibility, setContentVisibility] = useState({
     kanji: { matched: 'BOTH', flipped: 'BOTH' },
-    frequency: { matched: 'NEVER', flipped: 'NEVER' },
     meaning: { matched: 'BOTH', flipped: 'NEVER' },
-    heisig: { matched: 'NEVER', flipped: 'NEVER' },
     on: { matched: 'FIRST_ONLY', flipped: 'NEVER' },
     kun: { matched: 'SECOND_ONLY', flipped: 'NEVER' },
-    kunRomaji: { matched: 'NEVER', flipped: 'NEVER' },
-    onRomaji: { matched: 'NEVER', flipped: 'NEVER' },
+    readings: { matched: 'NEVER', flipped: 'NEVER' },
     strokeCount: { matched: 'NEVER', flipped: 'NEVER' },
-    unicode: { matched: 'NEVER', flipped: 'NEVER' },
   });
-
-
-
 
   const [cardOrderMode, setCardOrderMode] = useState('FLIP_ORDER');
   const [cardOrderAssignments, setCardOrderAssignments] = useState({}); // Stores permanent assignments
@@ -459,23 +446,13 @@ export default function KanjiMemoryGame() {
 
       // Wait for 1 second so the user/bot can see both cards before processing the result
       setTimeout(() => {
-if (card1.kanjiId === card2.kanjiId) {
+        if (card1.kanjiId === card2.kanjiId) {
           // Match found
           setMatchedPairs(prev => new Set([...prev, card1.kanjiId]));
           setMatchOwners(prev => ({
               ...prev,
               [card1.kanjiId]: currentPlayer
           }));
-          
-          // Save card order assignments for FLIP_ORDER mode on successful match
-          if (cardOrderMode === 'FLIP_ORDER') {
-            setCardOrderAssignments(prev => ({
-              ...prev,
-              [card1.id]: 1, // First flipped card (by card.id)
-              [card2.id]: 2  // Second flipped card (by card.id)
-            }));
-          }
-          
           setScores(prev => ({
             ...prev,
             [`player${currentPlayer}`]: prev[`player${currentPlayer}`] + 1
@@ -679,7 +656,7 @@ if (card1.kanjiId === card2.kanjiId) {
   const ContentSettingsModal = ({ onClose }) => {
     
     // Feature keys in a logical display order
-    const featureKeys = ['kanji', 'frequency', 'meaning', 'heisig', 'on', 'kun', 'kunRomaji', 'onRomaji', 'strokeCount', 'unicode'];
+    const featureKeys = ['kanji', 'meaning', 'on', 'kun', 'readings', 'strokeCount'];
 
     return (
         <SettingsModalWrapper title="Card Content Settings" onClose={onClose}>
@@ -942,55 +919,33 @@ if (card1.kanjiId === card2.kanjiId) {
         return false;
     };
     
-// --- Assemble Content Lines ---
+    // --- Assemble Content Lines ---
     const contentLines = [];
     
-    // 1. Frequency Rank
-    if (shouldShowFeature('frequency')) {
-        const freqText = card.freq_mainichi_shinbun ? `#${card.freq_mainichi_shinbun}` : 'N/A';
-        contentLines.push(<div key="frequency" className="text-purple-600 font-bold leading-tight">Freq: {freqText}</div>);
-    }
-    
-    // 2. Meaning
+    // 1. Meaning
     if (shouldShowFeature('meaning')) {
         contentLines.push(<div key="meaning" className="text-gray-700 font-semibold leading-tight">{card.meaning}</div>);
     }
     
-    // 3. Heisig Keyword
-    if (shouldShowFeature('heisig')) {
-        contentLines.push(<div key="heisig" className="text-indigo-600 font-semibold leading-tight italic">Heisig: {card.heisig_en}</div>);
-    }
-    
-    // 4. On-Yomi
+    // 2. On-Yomi
     if (shouldShowFeature('on')) {
         contentLines.push(<div key="on" className="text-gray-500 leading-tight">On: {card.on}</div>);
     }
 
-    // 5. Kun-Yomi
+    // 3. Kun-Yomi
     if (shouldShowFeature('kun')) {
         contentLines.push(<div key="kun" className="text-gray-500 leading-tight">Kun: {card.kun}</div>);
     }
     
-    // 6. Kun-Yomi (Romaji)
-    if (shouldShowFeature('kunRomaji')) {
-        const kunRomaji = card.kun !== '—' ? wanakana.toRomaji(card.kun) : '—';
-        contentLines.push(<div key="kunRomaji" className="text-blue-500 leading-tight">Kun (R): {kunRomaji}</div>);
+    // 4. Combined Readings (Romaji/Readings Request)
+    if (shouldShowFeature('readings')) {
+        const combined = `On: ${card.on} | Kun: ${card.kun}`;
+        contentLines.push(<div key="readings" className="text-gray-600 font-medium leading-tight">Readings: {combined}</div>);
     }
     
-    // 7. On-Yomi (Romaji)
-    if (shouldShowFeature('onRomaji')) {
-        const onRomaji = card.on !== '—' ? wanakana.toRomaji(card.on) : '—';
-        contentLines.push(<div key="onRomaji" className="text-blue-500 leading-tight">On (R): {onRomaji}</div>);
-    }
-    
-    // 8. Stroke Count
+    // 5. Stroke Count
     if (shouldShowFeature('strokeCount')) {
         contentLines.push(<div key="strokes" className="text-gray-500 leading-tight">Strokes: {card.stroke_count}</div>);
-    }
-    
-    // 9. Unicode
-    if (shouldShowFeature('unicode')) {
-        contentLines.push(<div key="unicode" className="text-gray-400 text-xs leading-tight">U+{card.unicode}</div>);
     }
 
 
@@ -1011,7 +966,7 @@ if (card1.kanjiId === card2.kanjiId) {
         <div className={`flex items-center justify-center h-full w-full p-1 absolute inset-0 backface-hidden ${flipped ? 'opacity-100' : 'opacity-0'}`}>
           {flipped ? (
             <div className="text-center transition-all duration-300 text-gray-900">
-                {/* 10. Kanji Character Display */}
+                {/* 6. Kanji Character Display */}
                 {shouldShowFeature('kanji') ? (
                     <div 
                         style={{ fontSize: kanjiFontSize }}
@@ -1148,20 +1103,14 @@ if (card1.kanjiId === card2.kanjiId) {
                             <p className="text-2xl font-bold text-gray-700 mt-2">{data.meaning}</p>
                         </div>
                         
-<div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <h3 className="text-lg font-bold text-gray-700 mb-1">On-yomi (音)</h3>
                                 <p className="text-gray-900 ml-3 p-2 bg-purple-50 rounded-lg text-sm">{data.on}</p>
-                                <p className="text-blue-600 ml-3 p-2 bg-blue-50 rounded-lg text-xs mt-1 italic">
-                                    {data.on !== '—' ? wanakana.toRomaji(data.on) : '—'}
-                                </p>
                             </div>
                             <div>
                                 <h3 className="text-lg font-bold text-gray-700 mb-1">Kun-yomi (訓)</h3>
                                 <p className="text-gray-900 ml-3 p-2 bg-purple-50 rounded-lg text-sm">{data.kun}</p>
-                                <p className="text-blue-600 ml-3 p-2 bg-blue-50 rounded-lg text-xs mt-1 italic">
-                                    {data.kun !== '—' ? wanakana.toRomaji(data.kun) : '—'}
-                                </p>
                             </div>
                         </div>
 
@@ -1169,9 +1118,6 @@ if (card1.kanjiId === card2.kanjiId) {
                             <div className="mt-4">
                                 <h3 className="text-lg font-bold text-gray-700 mb-1">Name Readings (名乗り)</h3>
                                 <p className="text-gray-900 ml-3 p-2 bg-purple-50 rounded-lg text-sm">{data.name_readings}</p>
-                                <p className="text-blue-600 ml-3 p-2 bg-blue-50 rounded-lg text-xs mt-1 italic">
-                                    {wanakana.toRomaji(data.name_readings)}
-                                </p>
                             </div>
                         )}
                         
@@ -1221,17 +1167,12 @@ if (card1.kanjiId === card2.kanjiId) {
                         <>
                             <div className="space-y-4 max-h-80 overflow-y-auto pr-2">
                                 {/* Use visibleWordCount for slicing */}
-{wordData.slice(0, visibleWordCount).map((word, index) => (
+                                {wordData.slice(0, visibleWordCount).map((word, index) => (
                                     <div key={index} className="p-4 border border-gray-200 rounded-lg bg-gray-50 shadow-sm">
                                         {word.variants.map((variant, vIndex) => (
-                                            <div key={vIndex} className="flex items-baseline mb-2 flex-wrap">
+                                            <div key={vIndex} className="flex items-baseline mb-2">
                                                 <span className="text-xl font-bold text-gray-900 mr-3">{variant.written}</span>
-                                                <span className="text-lg text-indigo-600">
-                                                    ({variant.pronounced})
-                                                </span>
-                                                <span className="text-sm text-blue-500 ml-2 italic">
-                                                    ({wanakana.toRomaji(variant.pronounced)})
-                                                </span>
+                                                <span className="text-lg text-indigo-600">({variant.pronounced})</span>
                                             </div>
                                         ))}
                                         <ul className="list-none space-y-1 ml-4 text-sm text-gray-700">
